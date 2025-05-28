@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 Plugin de Manutenção Preventiva para GLPI
 License
 GLPI Version
@@ -66,3 +67,6 @@ Desenvolvido por:
 www.widatecnologia.com.br
 
 🔧 Manutenção preventiva = Menos falhas + Mais produtividade!
+=======
+# glpi-preventive-maintenance
+>>>>>>> 9fb6c824f7e52bc2b9cf0ef735e05c787c9f94e5
