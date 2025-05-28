@@ -6,10 +6,15 @@ GLPI Version
 📌 Visão Geral
 Plugin para agendar, monitorar e automatizar manutenções preventivas de computadores no GLPI, com:
 ✔ Cadastro de planos de manutenção por entidade
+
 ✔ Alertas visuais 
+
 ✔ Geração automática de tickets para manutenções urgentes
+
 ✔ Atualização automatica da data de manutenção assim que o chamado é resolvido
+
 ✔ Lista de manutenção separada por entidade
+
 ✔ Filtro avaçado na lista
 
 🚀 Instalação
