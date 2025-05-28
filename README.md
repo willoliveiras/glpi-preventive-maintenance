@@ -4,7 +4,9 @@ License
 GLPI Version
 
 📌 Visão Geral
+
 Plugin para agendar, monitorar e automatizar manutenções preventivas de computadores no GLPI, com:
+
 ✔ Cadastro de planos de manutenção por entidade
 
 ✔ Alertas visuais 
