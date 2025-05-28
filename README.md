@@ -1,11 +1,15 @@
-<<<<<<< HEAD
-Plugin de Manutenção Preventiva para GLPI
-License
-GLPI Version
+# 🔧 Plugin de Manutenção Preventiva para GLPI
 
-📌 Visão Geral
+[![Licença GPLv2+](https://img.shields.io/badge/license-GPLv2+-blue.svg)](https://www.gnu.org/licenses/gpl-2.0.html)
+[![Versão GLPI](https://img.shields.io/badge/GLPI-9.x%2F10.x-success)](https://glpi-project.org)
+[![GitHub Release](https://img.shields.io/github/v/release/willoliveiras/glpi-preventive-maintenance)](https://github.com/willoliveiras/glpi-preventive-maintenance/releases)
+[![GitHub Stars](https://img.shields.io/github/stars/willoliveiras/glpi-preventive-maintenance?style=social)](https://github.com/willoliveiras/glpi-preventive-maintenance/stargazers)
 
-Plugin para agendar, monitorar e automatizar manutenções preventivas de computadores no GLPI, com:
+Plugin para gestão automatizada de manutenções preventivas no GLPI
+
+---
+
+## 🌟 Recursos Principais
 
 ✔ Cadastro de planos de manutenção por entidade
 
@@ -17,63 +21,79 @@ Plugin para agendar, monitorar e automatizar manutenções preventivas de comput
 
 ✔ Lista de manutenção separada por entidade
 
-✔ Filtro avaçado na lista
-
-🚀 Instalação
-Baixe a última versão do GitHub
-
-Extraia para: /glpi/plugins/preventivemaintenance
-
-Ative o plugin em: Configurações > Plugins
-Configure permissões para grupos técnicos
-
-Requisitos:
-
-GLPI 9.x ou 10.x
-
-PHP 7.4+
 
 🔧 Funcionalidades Principais
+--
+
+
 1. Agendamento Inteligente
-Defina intervalos personalizados (diário, semanal, mensal, anual)
+    Defina intervalos personalizados (diário, semanal, mensal, anual)
 
-Calendário interativo com cálculo automático de datas
+2. Calendário interativo com cálculo automático de datas
 
-2. Automatização
-Tickets automáticos para manutenções atrasadas (configurável)
+3. Automatização
+    Tickets automáticos para manutenções atrasadas (configurável)
+
+4. Atualização da data de manutenção automatica se Ticketsautomaticos estiver habilitado
+
+5. Status visual por cores (✅ Em dia / ⚠️ Atenção / ❌ Urgente)
+
+6. Filtros por técnico, entidade ou data
+
+7. Progresso em porcentagem para cada item
+
+8. Auto Ticket: Habilite/desative a criação automática
+
+9. Permissões: Controle acesso por perfil (leitura, edição, exclusão)
 
 
-3. Atualização da data de manutenção automatica se Ticketsautomaticos estiver habilitado
+ 🚀 Instalação
+--
 
-Status visual por cores (✅ Em dia / ⚠️ Atenção / ❌ Urgente)
-
-Filtros por técnico, entidade ou data
-
-Progresso em porcentagem para cada item
-
-⚙ Configuração
-Acesse: Configurações > Plugins > Manutenção Preventiva
+1. Baixe a última versão [aqui](https://github.com/willoliveiras/glpi-preventive-maintenance/releases)
+2. Extraia para: `/glpi/plugins/preventivemaintenance`
+3. Ative em: `Configurações > Plugins`
+4. Configure: Administração > Perfis > [seu usuario]> Manutenção Preventiva
 
 
-Auto Ticket: Habilite/desative a criação automática
+📸 Demonstração
+--
 
-Permissões: Controle acesso por perfil (leitura, edição, exclusão)
+Painel Principal	
+![principal](https://github.com/user-attachments/assets/039e387d-f9f8-4fb2-a325-9a34970950e3)
 
-📊 Integrações
-GLPI Tickets: Vincula manutenções a tickets existentes
+Chamados automaticos
+![chamados](https://github.com/user-attachments/assets/35cbd741-942a-4aa9-90bf-4ebfd2f22c83)
 
-Inventário: Mostra dados do item (serial, modelo, localização)
+Cadastro de Nova manutenção
+![image](https://github.com/user-attachments/assets/0e2d4224-62ae-4b1c-846e-882feec4b375)
+
+Configurações
+![image](https://github.com/user-attachments/assets/15aec9dd-a8a1-4b79-b010-813d3f544902)
+
+
+💰 Ajude Este Projeto
+--
+
+Se esse projeto te ajudou,
+mantenha este plugin ativo com uma doação via PIX:
+
+![qrcode-pix (2)](https://github.com/user-attachments/assets/ce15d03f-1921-4df2-994e-93d5eea90505)
+
+
+
 
 
 
 📜 Licença
-Licenciado sob GNU GPLv2+ - Ver licença completa.
+--
+Licenciado sob GNU GPLv2+
 
 Desenvolvido por:
 © 2025 WIDA - Work Information Development Analytics
+
 www.widatecnologia.com.br
 
-🔧 Manutenção preventiva = Menos falhas + Mais produtividade!
-=======
-# glpi-preventive-maintenance
->>>>>>> 9fb6c824f7e52bc2b9cf0ef735e05c787c9f94e5
+##🔧 Manutenção preventiva = Menos falhas + Mais produtividade!
+--
+
