@@ -84,7 +84,7 @@ mantenha este plugin ativo com uma doação via PIX:
 
 Ou, se preferir, você pode copiar o código PIX da imagem abaixo:
 
-    **Código PIX (copia e cola):**
+    
     00020126720014BR.GOV.BCB.PIX0136db70b7e3-711a-4774-8884-7275386521e40210Obrigado!!5204000053039865802BR5925William de Oliveira Santo6009SAO PAULO621405101SdXWYH7RP6304D3A2
 
 
