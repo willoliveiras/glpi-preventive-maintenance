@@ -78,13 +78,14 @@ Configurações
 Se esse projeto te ajudou,
 mantenha este plugin ativo com uma doação via PIX:
 
-![qrcode-pix (2)](https://github.com/user-attachments/assets/ce15d03f-1921-4df2-994e-93d5eea90505)
+![IMG_20250528_212814 (1)](https://github.com/user-attachments/assets/0bceee5a-fbd5-4807-85e5-55222f45917d)
+
 
 
 Ou, se preferir, você pode copiar o código PIX da imagem abaixo:
 
     **Código PIX (copia e cola):**
-    00020126580014BR.GOV.BCB.PIX0136db70b7e3-711a-4774-8884-7275386521e45204000053039865802BR5925William de Oliveira Santo6009SAO PAULO62140510o3YoPdO2BE63041490
+    00020126720014BR.GOV.BCB.PIX0136db70b7e3-711a-4774-8884-7275386521e40210Obrigado!!5204000053039865802BR5925William de Oliveira Santo6009SAO PAULO621405101SdXWYH7RP6304D3A2
 
 
 📜 Licença
