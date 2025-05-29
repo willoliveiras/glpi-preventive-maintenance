@@ -81,8 +81,10 @@ mantenha este plugin ativo com uma doação via PIX:
 ![qrcode-pix (2)](https://github.com/user-attachments/assets/ce15d03f-1921-4df2-994e-93d5eea90505)
 
 
+Ou, se preferir, você pode copiar o código PIX da imagem abaixo:
 
-
+    **Código PIX (copia e cola):**
+    00020126580014BR.GOV.BCB.PIX0136db70b7e3-711a-4774-8884-7275386521e45204000053039865802BR5925William de Oliveira Santo6009SAO PAULO62140510o3YoPdO2BE63041490
 
 
 📜 Licença
@@ -94,6 +96,6 @@ Desenvolvido por:
 
 www.widatecnologia.com.br
 
-##🔧 Manutenção preventiva = Menos falhas + Mais produtividade!
+🔧 Manutenção preventiva = Menos falhas + Mais produtividade!
 --
 
