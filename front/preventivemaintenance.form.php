@@ -84,25 +84,32 @@ if ($is_edit) {
     $selected_entity_id = $item_data['entities_id'];
 }
 
-// Busca os técnicos responsáveis (usuários com perfil de técnico)
-// Finds responsible technicians (users with technician profile)
+// Busca todos os perfis disponíveis para seleção
+// Finds all available profiles for selection
+$profile = new Profile();
+$all_profiles = $profile->find([], 'name ASC');
+
+// Busca os perfis técnicos selecionados (armazenados na sessão ou usa o padrão 'Technician')
+// Finds selected technician profiles (stored in session or uses default 'Technician')
+$selected_profiles = $_SESSION['plugin_preventivemaintenance_selected_profiles'] ?? ['Technician'];
+
+// Busca os técnicos responsáveis (usuários com perfil de técnico selecionado)
+// Finds responsible technicians (users with selected technician profile)
 $technicians = [];
 $user = new User();
-$profile = new Profile();
 $profile_user = new Profile_User();
 
-// Busca o ID do perfil de técnico
-// Finds technician profile ID
-$technician_profile = $profile->find(['name' => 'Technician']);
-$technician_profile_id = key($technician_profile);
-
-if ($technician_profile_id) {
-    $profile_users = $profile_user->find(['profiles_id' => $technician_profile_id]);
-    
-    foreach ($profile_users as $pu) {
-        $user->getFromDB($pu['users_id']);
-        if ($user->fields['is_active']) {
-            $technicians[$user->getID()] = $user->getName();
+foreach ($selected_profiles as $profile_name) {
+    $technician_profile = $profile->find(['name' => $profile_name]);
+    if (!empty($technician_profile)) {
+        $technician_profile_id = key($technician_profile);
+        $profile_users = $profile_user->find(['profiles_id' => $technician_profile_id]);
+        
+        foreach ($profile_users as $pu) {
+            $user->getFromDB($pu['users_id']);
+            if ($user->fields['is_active'] && !isset($technicians[$user->getID()])) {
+                $technicians[$user->getID()] = $user->getName();
+            }
         }
     }
 }
@@ -119,14 +126,11 @@ if (isset($_POST['add'])) {
 
         // Validação da entidade
         // Entity validation
-        if (!isset($_POST['entities_id']) || empty($_POST['entities_id'])) {
-            throw new Exception(__('O campo entidade é obrigatório.'));
-        }
-
+        
         $selected_entity_id = (int)$_POST['entities_id'];
         error_log("[ENTIDADE] Valor recebido: " . $selected_entity_id);
         
-        if ($selected_entity_id <= 0) {
+        if ($selected_entity_id < 0) {
             throw new Exception(__('Selecione uma entidade válida.'));
         }
 
@@ -263,10 +267,19 @@ if (isset($_POST['add'])) {
     }
 }
 
+// Processa a seleção de perfis técnicos se enviado
+// Processes technician profiles selection if submitted
+if (isset($_POST['save_selected_profiles'])) {
+    $_SESSION['plugin_preventivemaintenance_selected_profiles'] = $_POST['profiles'] ?? ['Technician'];
+    Html::back();
+}
+
 // Configuração do formulário
 // Form configuration
 $entity = new Entity();
-$entities = $entity->find(['id' => $_SESSION['glpiactiveentities']]);
+// Busca apenas as entidades ativas da sessão do usuário
+// Finds only active entities from user session
+$entities = $entity->find(['id' => $_SESSION['glpiactiveentities']], 'completename ASC');
 
 $computer = new Computer();
 $all_computers = $computer->find(['is_deleted' => 0], "name ASC");
@@ -424,6 +437,63 @@ Html::header(
     .ui-datepicker-interval button:hover {
         background: #45a049;
     }
+    
+    /* Estilos para o modal de seleção de perfis */
+    /* Styles for profile selection modal */
+    .profile-modal {
+        display: none;
+        position: fixed;
+        z-index: 1000;
+        left: 0;
+        top: 0;
+        width: 100%;
+        height: 100%;
+        background-color: rgba(0,0,0,0.4);
+    }
+    .profile-modal-content {
+        background-color: #fefefe;
+        margin: 10% auto;
+        padding: 20px;
+        border: 1px solid #888;
+        width: 50%;
+        border-radius: 5px;
+        box-shadow: 0 4px 8px 0 rgba(0,0,0,0.2);
+    }
+    .profile-modal-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 20px;
+    }
+    .profile-modal-title {
+        font-size: 1.2em;
+        font-weight: bold;
+    }
+    .profile-modal-close {
+        color: #aaa;
+        font-size: 28px;
+        font-weight: bold;
+        cursor: pointer;
+    }
+    .profile-modal-close:hover {
+        color: black;
+    }
+    .profile-checkboxes {
+        max-height: 400px;
+        overflow-y: auto;
+        margin-bottom: 20px;
+    }
+    .profile-checkbox-item {
+        margin-bottom: 10px;
+    }
+    .profile-modal-footer {
+        display: flex;
+        justify-content: flex-end;
+        gap: 10px;
+    }
+    .select-profile-btn {
+        margin-bottom: 15px;
+    }
 </style>
 
 <!-- HTML principal do formulário -->
@@ -448,6 +518,15 @@ Html::header(
                 <!-- STEP 1 - Somente seleção da entidade -->
                 <!-- STEP 1 - Only entity selection -->
                 <div id='step1'>
+                    <!-- Botão para selecionar perfis técnicos -->
+                    <!-- Button to select technician profiles -->
+                    <div class="select-profile-btn">
+                        <button type="button" id="selectProfilesBtn" class="btn btn-info">
+                            <i class="fas fa-user-cog me-2"></i><?php echo __('Selecionar Perfis Técnicos'); ?>
+                        </button>
+                        <small class="text-muted d-block mt-1"><?php echo __('Perfis selecionados: ') . implode(', ', $selected_profiles); ?></small>
+                    </div>
+                    
                     <div class='form-section'>
                         <label for='entities_id_select'><?php echo __('Entidade'); ?> <span class='required'>*</span></label>
                         <select name='entities_id_select' id='entities_id_select' class='form-select' required>
@@ -533,6 +612,38 @@ Html::header(
                     </div>
                 </div>
             </form>
+            
+            <!-- Modal para seleção de perfis técnicos -->
+            <!-- Modal for technician profiles selection -->
+            <div id="profileModal" class="profile-modal">
+                <div class="profile-modal-content">
+                    <div class="profile-modal-header">
+                        <div class="profile-modal-title"><?php echo __('Selecionar Perfis Técnicos'); ?></div>
+                        <span class="profile-modal-close">&times;</span>
+                    </div>
+                    <form method="post" id="profileSelectionForm">
+                        <?php echo Html::hidden('_glpi_csrf_token', ['value' => $token]); ?>
+                        <input type="hidden" name="save_selected_profiles" value="1">
+                        
+                        <div class="profile-checkboxes">
+                            <?php foreach ($all_profiles as $prof): ?>
+                                <div class="profile-checkbox-item">
+                                    <label>
+                                        <input type="checkbox" name="profiles[]" value="<?php echo $prof['name']; ?>"
+                                            <?php echo in_array($prof['name'], $selected_profiles) ? 'checked' : ''; ?>>
+                                        <?php echo $prof['name']; ?>
+                                    </label>
+                                </div>
+                            <?php endforeach; ?>
+                        </div>
+                        
+                        <div class="profile-modal-footer">
+                            <button type="button" class="btn btn-secondary" id="cancelProfileSelection"><?php echo __('Cancelar'); ?></button>
+                            <button type="submit" class="btn btn-primary"><?php echo __('Salvar Seleção'); ?></button>
+                        </div>
+                    </form>
+                </div>
+            </div>
             
             <!-- Inclusão de bibliotecas JavaScript -->
             <!-- JavaScript libraries inclusion -->
@@ -731,6 +842,66 @@ Html::header(
                         select.append(option);
                     }
                 }
+                
+                // ==============================================
+                // CÓDIGO PARA O BOTÃO DE SELEÇÃO DE PERFIS TÉCNICOS
+                // CODE FOR TECHNICIAN PROFILES SELECTION BUTTON
+                // ==============================================
+                
+                // Abre o modal de seleção de perfis
+                // Opens profile selection modal
+                $('#selectProfilesBtn').click(function() {
+                    $('#profileModal').show();
+                });
+                
+                // Fecha o modal quando clica no X
+                // Closes modal when clicking X
+                $('.profile-modal-close').click(function() {
+                    $('#profileModal').hide();
+                });
+                
+                // Fecha o modal quando clica em Cancelar
+                // Closes modal when clicking Cancel
+                $('#cancelProfileSelection').click(function() {
+                    $('#profileModal').hide();
+                });
+                
+                // Fecha o modal quando clica fora da área de conteúdo
+                // Closes modal when clicking outside content area
+                $(window).click(function(event) {
+                    if (event.target == $('#profileModal')[0]) {
+                        $('#profileModal').hide();
+                    }
+                });
+                
+                // Processa o formulário de seleção de perfis
+                // Processes profile selection form
+                $('#profileSelectionForm').submit(function(e) {
+                    e.preventDefault();
+                    
+                    // Verifica se pelo menos um perfil foi selecionado
+                    // Checks if at least one profile was selected
+                    if ($('#profileSelectionForm input[name="profiles[]"]:checked').length === 0) {
+                        alert('<?php echo __("Selecione pelo menos um perfil técnico"); ?>');
+                        return;
+                    }
+                    
+                    // Envia o formulário via AJAX
+                    // Submits form via AJAX
+                    $.ajax({
+                        url: window.location.href,
+                        type: 'POST',
+                        data: $(this).serialize(),
+                        success: function(response) {
+                            // Recarrega a página para atualizar a lista de técnicos
+                            // Reloads page to update technicians list
+                            window.location.reload();
+                        },
+                        error: function() {
+                            alert('<?php echo __("Erro ao salvar a seleção de perfis"); ?>');
+                        }
+                    });
+                });
             });
             </script>
         </div>
