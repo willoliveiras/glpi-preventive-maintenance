@@ -246,8 +246,6 @@ function plugin_init_preventivemaintenance() {
     $PLUGIN_HOOKS['csrf_compliant']['preventivemaintenance'] = true;
     $PLUGIN_HOOKS['config_page']['preventivemaintenance'] = 'front/preventivemaintenance.php';
     $PLUGIN_HOOKS["menu_toadd"]['preventivemaintenance'] = array('plugins'  => 'PluginPreventivemaintenanceMenu');
-    $PLUGIN_HOOKS['add_javascript']['preventivemaintenance'] = ['js/script.js'];
-    $PLUGIN_HOOKS['add_css']['preventivemaintenance'] = ['css/style.css'];
     $PLUGIN_HOOKS['rights']['preventivemaintenance'] = 'plugin_preventivemaintenance_getRights';
     $PLUGIN_HOOKS['menu_entry_icon']['preventivemaintenance'] = Plugin::getWebDir('preventivemaintenance', false) . '/pics/logopm.png';
     
