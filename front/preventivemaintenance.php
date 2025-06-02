@@ -467,6 +467,24 @@ if (!empty($filters['date_from']) || !empty($filters['date_to'])) {
 // Busca itens
 $all_items = $pm->find($criteria, 'entities_id, next_maintenance_date ASC');
 
+// Obtém lista de técnicos cadastrados nas manutenções
+$technicians_in_maintenance = [];
+foreach ($all_items as $item) {
+    if ($item['technician_id'] > 0) {
+        $technicians_in_maintenance[$item['technician_id']] = $item['technician_id'];
+    }
+}
+
+// Carrega os dados dos técnicos (com nome completo - realname)
+$technicians_data = [];
+if (!empty($technicians_in_maintenance)) {
+    $user = new User();
+    $technicians_iterator = $user->find(['id' => array_values($technicians_in_maintenance)]);
+    foreach ($technicians_iterator as $tech) {
+        $technicians_data[$tech['id']] = formatUserName($tech['id'], $tech['name'], $tech['realname'], $tech['firstname']);
+    }
+}
+
 // Função para obter caminho da entidade
 function getFullEntityPath($entity_id) {
     $entity = new Entity();
@@ -818,7 +836,6 @@ Html::header(
     }
     
     @media (max-width: 768px) {
-        /* [Outros estilos mobile permanecem...] */
         .donation-button {
             bottom: 20px;
             right: 20px;
@@ -894,16 +911,17 @@ Html::header(
                 
                 <div class="filter-group">
                     <div class="filter-title"><?= __('Technician') ?></div>
-                    <?php 
-                    $technician_options = [
-                        'name' => 'technician',
-                        'value' => $filters['technician'],
-                        'right' => 'interface',
-                        'display' => false,
-                        'width' => '100%'
-                    ];
-                    echo User::dropdown($technician_options);
-                    ?>
+                    <select name="technician" class="form-control">
+                        <option value="0"><?= __('Todos') ?></option>
+                        <?php
+                        if (!empty($technicians_data)) {
+                            foreach ($technicians_data as $tech_id => $tech_name) {
+                                $selected = ($filters['technician'] == $tech_id) ? 'selected' : '';
+                                echo "<option value='$tech_id' $selected>$tech_name</option>";
+                            }
+                        }
+                        ?>
+                    </select>
                 </div>
                 
                 <div class="filter-group">
@@ -964,8 +982,7 @@ Html::header(
                                 $computer = new Computer();
                                 $computer_name = $computer->getFromDB($item['items_id']) ? $computer->getName() : __('N/A');
                                 
-                                $technician = new User();
-                                $technician_name = $technician->getFromDB($item['technician_id']) ? $technician->getName() : '-';
+                                $technician_name = isset($technicians_data[$item['technician_id']]) ? $technicians_data[$item['technician_id']] : '-';
                                 
                                 $last = !empty($item['last_maintenance_date']) ? strtotime($item['last_maintenance_date']) : 0;
                                 $next = !empty($item['next_maintenance_date']) ? strtotime($item['next_maintenance_date']) : 0;
@@ -993,7 +1010,7 @@ Html::header(
                                     $status_html = "<div class='progress'>
                                         <div class='progress-bar $status_class' role='progressbar' style='width: $percent%'>
                                             <strong>$percent% - $status_text</strong>
-										</div>";
+                                        </div>";
                                 }
                                 ?>
                                 <tr>
@@ -1100,7 +1117,7 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }
     
-  // Donation button functionality
+    // Donation button functionality
     const donationButton = document.getElementById('donationButton');
     const donationQrContainer = document.getElementById('donationQrContainer');
     const copyPixBtn = document.getElementById('copyPixBtn');
@@ -1155,4 +1172,4 @@ document.addEventListener('DOMContentLoaded', function() {
 </script>
 
 <?php
-Html::footer();								   
+Html::footer();							   
