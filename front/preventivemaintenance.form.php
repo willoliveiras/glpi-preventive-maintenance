@@ -55,258 +55,192 @@
  * @link      [Your Plugin URL or GitHub Repository]
  * -------------------------------------------------------------------------
  */
- 
- 
- 
 
-// Inclui arquivos necessários do GLPI e verifica permissões
-// Includes required GLPI files and checks permissions
-include('../../../inc/includes.php');
-Session::checkRight('plugin_preventivemaintenance', CREATE);
+// No GLPI 11 este script é carregado pelo roteador do GLPI (inc/includes.php não é mais necessário)
+// On GLPI 11 this script is loaded by the GLPI router (inc/includes.php is no longer needed)
 
-// Conexão manual com o banco de dados
-// Manual database connection
-$DB = new DB();
-$is_edit = isset($_GET['id']);
-$pm = new PluginPreventivemaintenancePreventivemaintenance();
+$pm       = new PluginPreventivemaintenancePreventivemaintenance();
+$list_url = PluginPreventivemaintenancePreventivemaintenance::getSearchURL();
+$is_edit  = !empty($_GET['id']);
+$id       = (int) ($_GET['id'] ?? 0);
 $item_data = [];
-$selected_entity_id = 0;
+
+// Verifica permissões (criar ou atualizar)
+// Checks permissions (create or update)
+Session::checkRight('plugin_preventivemaintenance', $is_edit ? UPDATE : CREATE);
 
 // Se estiver editando, carrega os dados existentes
 // If editing, loads existing data
 if ($is_edit) {
-    $id = (int)$_GET['id'];
-    if (!$pm->getFromDB($id)) {
+    if (!$pm->getFromDB($id) || !Session::haveAccessToEntity($pm->fields['entities_id'])) {
         Session::addMessageAfterRedirect(__('Registro não encontrado'), false, ERROR);
-        Html::redirect('preventivemaintenance.php');
+        Html::redirect($list_url);
     }
     $item_data = $pm->fields;
-    $selected_entity_id = $item_data['entities_id'];
+}
+
+// Processa a seleção de perfis técnicos se enviado
+// Processes technician profiles selection if submitted
+if (isset($_POST['save_selected_profiles'])) {
+    $profiles = array_values(array_filter(array_map('strval', (array) ($_POST['profiles'] ?? []))));
+    $_SESSION['plugin_preventivemaintenance_selected_profiles'] = $profiles ?: ['Technician'];
+    Html::back();
+}
+
+// Processamento do formulário quando enviado
+// Form processing when submitted
+if (isset($_POST['add'])) {
+    // O token CSRF é validado automaticamente pelo GLPI 11
+    // CSRF token is automatically validated by GLPI 11
+    $error = null;
+
+    $selected_entity_id = (int) ($_POST['entities_id'] ?? -1);
+    $computer_id        = (int) ($_POST['items_id'] ?? 0);
+    $computer           = new Computer();
+    $last_date          = trim((string) ($_POST['last_maintenance_date'] ?? ''));
+    $next_date          = trim((string) ($_POST['next_maintenance_date'] ?? ''));
+    $is_valid_date      = static function (string $date): bool {
+        return preg_match('/^(\d{4})-(\d{2})-(\d{2})$/', $date, $m) === 1 && checkdate((int) $m[2], (int) $m[3], (int) $m[1]);
+    };
+
+    if ($selected_entity_id < 0 || !(new Entity())->getFromDB($selected_entity_id)) {
+        $error = __('A entidade selecionada não existe no sistema.');
+    } elseif (!Session::haveAccessToEntity($selected_entity_id)) {
+        $error = __('Selecione uma entidade válida.');
+    } elseif ($computer_id <= 0) {
+        $error = __('Selecione um computador válido.');
+    } elseif (!$computer->getFromDB($computer_id)) {
+        $error = __('Computador selecionado não encontrado.');
+    } elseif ($computer->fields['entities_id'] != $selected_entity_id) {
+        // Verifica se o computador pertence à entidade
+        // Checks if computer belongs to entity
+        $error = __('O computador selecionado não pertence à entidade escolhida.');
+    } elseif (!$is_valid_date($next_date) || ($last_date !== '' && !$is_valid_date($last_date))) {
+        $error = __('Informe datas válidas (AAAA-MM-DD).');
+    } else {
+        // Verifica se já existe manutenção para este computador
+        // Checks if maintenance already exists for this computer
+        $existing = $pm->find(['items_id' => $computer_id, 'itemtype' => 'Computer']);
+        unset($existing[$id]);
+        if (count($existing) > 0) {
+            $error = sprintf(
+                __('Já existe uma manutenção cadastrada para o computador %s (ID: %d)'),
+                $computer->getName(),
+                $computer_id
+            );
+        }
+    }
+
+    if ($error !== null) {
+        Session::addMessageAfterRedirect(htmlescape($error), false, ERROR);
+        Html::back();
+    }
+
+    // Prepara os dados para gravação
+    // Prepares data for saving
+    $input = [
+        'name'                  => trim((string) ($_POST['name'] ?? '')),
+        'entities_id'           => $selected_entity_id,
+        'is_recursive'          => 0,
+        'technician_id'         => (int) ($_POST['technician_id'] ?? 0),
+        'items_id'              => $computer_id,
+        'itemtype'              => 'Computer',
+        'last_maintenance_date' => $last_date !== '' ? $last_date : 'NULL',
+        'next_maintenance_date' => $next_date,
+        'maintenance_interval'  => 30,
+    ];
+
+    // Cálculo do intervalo de manutenção
+    // Maintenance interval calculation
+    if ($last_date !== '') {
+        $input['maintenance_interval'] = (new DateTime($last_date))->diff(new DateTime($next_date))->days;
+    }
+
+    if ($is_edit) {
+        $input['id'] = $id;
+        if ($pm->update($input)) {
+            Session::addMessageAfterRedirect(__('Manutenção atualizada com sucesso!'), true, INFO);
+            Html::redirect($list_url);
+        }
+        Session::addMessageAfterRedirect(__('Erro ao atualizar no banco de dados.'), false, ERROR);
+    } else {
+        if ($pm->add($input)) {
+            Session::addMessageAfterRedirect(__('Manutenção criada com sucesso!'), true, INFO);
+            Html::redirect($list_url);
+        }
+        Session::addMessageAfterRedirect(__('Erro ao gravar no banco de dados.'), false, ERROR);
+    }
+    Html::back();
 }
 
 // Busca todos os perfis disponíveis para seleção
 // Finds all available profiles for selection
-$profile = new Profile();
+$profile      = new Profile();
 $all_profiles = $profile->find([], 'name ASC');
 
 // Busca os perfis técnicos selecionados (armazenados na sessão ou usa o padrão 'Technician')
 // Finds selected technician profiles (stored in session or uses default 'Technician')
 $selected_profiles = $_SESSION['plugin_preventivemaintenance_selected_profiles'] ?? ['Technician'];
 
-// Busca os técnicos responsáveis (usuários com perfil de técnico selecionado)
-// Finds responsible technicians (users with selected technician profile)
+// Busca os técnicos responsáveis (usuários ativos com perfil de técnico selecionado)
+// Finds responsible technicians (active users with selected technician profile)
 $technicians = [];
-$user = new User();
-$profile_user = new Profile_User();
-
-foreach ($selected_profiles as $profile_name) {
-    $technician_profile = $profile->find(['name' => $profile_name]);
-    if (!empty($technician_profile)) {
-        $technician_profile_id = key($technician_profile);
-        $profile_users = $profile_user->find(['profiles_id' => $technician_profile_id]);
-        
-        foreach ($profile_users as $pu) {
-            $user->getFromDB($pu['users_id']);
-            if ($user->fields['is_active'] && !isset($technicians[$user->getID()])) {
-                $technicians[$user->getID()] = $user->getName();
-            }
+$profile_ids = array_keys($profile->find(['name' => $selected_profiles]));
+if (!empty($profile_ids)) {
+    $user         = new User();
+    $profile_user = new Profile_User();
+    $user_ids     = array_unique(array_column($profile_user->find(['profiles_id' => $profile_ids]), 'users_id'));
+    if (!empty($user_ids)) {
+        foreach ($user->find(['id' => $user_ids, 'is_active' => 1, 'is_deleted' => 0]) as $u) {
+            $technicians[$u['id']] = (new DbUtils())->formatUserName($u['id'], $u['name'], $u['realname'], $u['firstname']);
         }
     }
 }
+asort($technicians, SORT_NATURAL | SORT_FLAG_CASE);
 
-// Processamento do formulário quando enviado
-// Form processing when submitted
-if (isset($_POST['add'])) {
-    try {
-        // Verificação de segurança CSRF
-        // CSRF security check
-        if (!isset($_POST['_glpi_csrf_token'])) {
-            throw new Exception(__('Token de segurança ausente. Recarregue a página e tente novamente.'));
-        }
-
-        // Validação da entidade
-        // Entity validation
-        
-        $selected_entity_id = (int)$_POST['entities_id'];
-        error_log("[ENTIDADE] Valor recebido: " . $selected_entity_id);
-        
-        if ($selected_entity_id < 0) {
-            throw new Exception(__('Selecione uma entidade válida.'));
-        }
-
-        $entity = new Entity();
-        if (!$entity->getFromDB($selected_entity_id)) {
-            throw new Exception(__('A entidade selecionada não existe no sistema.'));
-        }
-
-        // Validação do computador
-        // Computer validation
-        if (!isset($_POST['items_id']) || empty($_POST['items_id'])) {
-            throw new Exception(__('Selecione um computador válido.'));
-        }
-
-        $computer_id = (int)$_POST['items_id'];
-        $computer = new Computer();
-        if (!$computer->getFromDB($computer_id)) {
-            throw new Exception(__('Computador selecionado não encontrado.'));
-        }
-
-        // Verifica se o computador pertence à entidade
-        // Checks if computer belongs to entity
-        if ($computer->fields['entities_id'] != $selected_entity_id) {
-            throw new Exception(__('O computador selecionado não pertence à entidade escolhida.'));
-        }
-
-        // Verifica se já existe manutenção para este computador
-        // Checks if maintenance already exists for this computer
-        $existing = $pm->find([
-            'items_id' => $computer_id,
-            'itemtype' => 'Computer'
-        ]);
-        
-        if ($is_edit) {
-            unset($existing[$id]);
-        }
-        
-        if (count($existing) > 0) {
-            throw new Exception(sprintf(
-                __('Já existe uma manutenção cadastrada para o computador %s (ID: %d)'),
-                $computer->getName(),
-                $computer_id
-            ));
-        }
-
-        // Prepara os dados para gravação
-        // Prepares data for saving
-        $input = [
-            'name' => $_POST['name'] ?? '',
-            'entities_id' => $selected_entity_id,
-            'is_recursive' => 0,
-            'technician_id' => (int)$_POST['technician_id'],
-            'items_id' => $computer_id,
-            'itemtype' => 'Computer',
-            'last_maintenance_date' => $_POST['last_maintenance_date'] ?? null,
-            'next_maintenance_date' => $_POST['next_maintenance_date'],
-            'maintenance_interval' => 30
-        ];
-
-        // Cálculo do intervalo de manutenção
-        // Maintenance interval calculation
-        if (!empty($_POST['last_maintenance_date']) && !empty($_POST['next_maintenance_date'])) {
-            $last = new DateTime($_POST['last_maintenance_date']);
-            $next = new DateTime($_POST['next_maintenance_date']);
-            $interval = $last->diff($next)->days;
-            $input['maintenance_interval'] = $interval;
-        }
-
-        error_log("[DADOS] Input preparado: " . print_r($input, true));
-
-        // GRAVAÇÃO MANUAL NO BANCO DE DADOS
-        // MANUAL DATABASE SAVE
-        if ($is_edit) {
-            $input['id'] = $id;
-            
-            // Atualização manual
-            // Manual update
-            $query = "UPDATE glpi_plugin_preventivemaintenance_preventivemaintenances SET
-                      name = '".$DB->escape($input['name'])."',
-                      entities_id = ".(int)$input['entities_id'].",
-                      is_recursive = 0,
-                      technician_id = ".(int)$input['technician_id'].",
-                      items_id = ".(int)$input['items_id'].",
-                      itemtype = 'Computer',
-                      last_maintenance_date = ".(!empty($input['last_maintenance_date']) ? "'".$DB->escape($input['last_maintenance_date'])."'" : "NULL").",
-                      next_maintenance_date = '".$DB->escape($input['next_maintenance_date'])."',
-                      maintenance_interval = ".(int)$input['maintenance_interval']."
-                      WHERE id = ".(int)$input['id'];
-            
-            error_log("[QUERY] Update: " . $query);
-            $result = $DB->query($query);
-            
-            if (!$result) {
-                error_log("[ERRO] Query falhou: " . $DB->error());
-                throw new Exception(__('Erro ao atualizar no banco de dados.'));
-            }
-            
-            Session::addMessageAfterRedirect(__('Manutenção atualizada com sucesso!'), true, INFO);
-        } else {
-            // Inserção manual
-            // Manual insert
-            $query = "INSERT INTO glpi_plugin_preventivemaintenance_preventivemaintenances
-                     (name, entities_id, is_recursive, technician_id, items_id, itemtype, 
-                      last_maintenance_date, next_maintenance_date, maintenance_interval)
-                      VALUES (
-                      '".$DB->escape($input['name'])."',
-                      ".(int)$input['entities_id'].",
-                      0,
-                      ".(int)$input['technician_id'].",
-                      ".(int)$input['items_id'].",
-                      'Computer',
-                      ".(!empty($input['last_maintenance_date']) ? "'".$DB->escape($input['last_maintenance_date'])."'" : "NULL").",
-                      '".$DB->escape($input['next_maintenance_date'])."',
-                      ".(int)$input['maintenance_interval']."
-                      )";
-            
-            error_log("[QUERY] Insert: " . $query);
-            $result = $DB->query($query);
-            
-            if (!$result) {
-                error_log("[ERRO] Query falhou: " . $DB->error());
-                throw new Exception(__('Erro ao gravar no banco de dados.'));
-            }
-            
-            Session::addMessageAfterRedirect(__('Manutenção criada com sucesso!'), true, INFO);
-        }
-
-        Html::redirect('preventivemaintenance.php');
-        
-    } catch (Exception $e) {
-        error_log("[ERRO] Processamento: " . $e->getMessage());
-        Session::addMessageAfterRedirect($e->getMessage(), false, ERROR);
-        Html::back();
-    }
-}
-
-// Processa a seleção de perfis técnicos se enviado
-// Processes technician profiles selection if submitted
-if (isset($_POST['save_selected_profiles'])) {
-    $_SESSION['plugin_preventivemaintenance_selected_profiles'] = $_POST['profiles'] ?? ['Technician'];
-    Html::back();
-}
-
-// Configuração do formulário
-// Form configuration
-$entity = new Entity();
 // Busca apenas as entidades ativas da sessão do usuário
 // Finds only active entities from user session
+$entity   = new Entity();
 $entities = $entity->find(['id' => $_SESSION['glpiactiveentities']], 'completename ASC');
 
-$computer = new Computer();
-$all_computers = $computer->find(['is_deleted' => 0], "name ASC");
+// Computadores das entidades ativas que ainda não possuem manutenção
+// Computers from active entities that don't have a maintenance yet
+$computer      = new Computer();
+$all_computers = $computer->find(
+    ['is_deleted' => 0, 'is_template' => 0] + getEntitiesRestrictCriteria('glpi_computers'),
+    'name ASC'
+);
 
-$existing_maintenances = $pm->find(['itemtype' => 'Computer']);
 $blocked_computers = [];
-foreach ($existing_maintenances as $maintenance) {
-    if ($is_edit && $maintenance['id'] == $item_data['id']) continue;
-    $blocked_computers[] = $maintenance['items_id'];
+foreach ($pm->find(['itemtype' => 'Computer']) as $maintenance) {
+    if ($is_edit && $maintenance['id'] == $id) {
+        continue;
+    }
+    $blocked_computers[] = (int) $maintenance['items_id'];
 }
 
-$available_computers = array_filter($all_computers, function($comp) use ($blocked_computers, $is_edit, $item_data) {
-    if ($is_edit && $comp['id'] == $item_data['items_id']) {
-        return true;
+$computers_data = [];
+foreach ($all_computers as $comp) {
+    if (in_array((int) $comp['id'], $blocked_computers, true)) {
+        continue;
     }
-    return !in_array($comp['id'], $blocked_computers);
-});
+    $computers_data[] = [
+        'id'          => (int) $comp['id'],
+        'name'        => $comp['name'] !== '' ? $comp['name'] : '(' . $comp['id'] . ')',
+        'entities_id' => (int) $comp['entities_id'],
+    ];
+}
 
-$token = Session::getNewCSRFToken();
+$token     = Session::getNewCSRFToken();
+$json_opts = JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP;
 
 // Exibe o cabeçalho do GLPI
 // Displays GLPI header
 Html::header(
-    __('Manutenção Preventiva', 'preventivemaintenance'),
-    $_SERVER['PHP_SELF'],
+    PluginPreventivemaintenancePreventivemaintenance::getTypeName(1),
+    '',
     'plugins',
-    'preventivemaintenance'
+    'PluginPreventivemaintenanceMenu'
 );
 ?>
 
@@ -316,7 +250,6 @@ Html::header(
     body {
         background-color: #cacccf !important;
     }
-    
     #step2 {
         display: none;
     }
@@ -328,23 +261,8 @@ Html::header(
         margin-bottom: 5px;
         font-weight: 500;
     }
-    .form-control, .form-select {
-        width: 100%;
-        padding: 8px 12px;
-        border: 1px solid #ced4da;
-        border-radius: 4px;
-    }
-    /* Estilo específico para o dropdown de técnico */
-    /* Specific style for technician dropdown */
-    select[name='technician_id'] {
-        width: 100% !important;
-    }
     .required {
         color: #dc3545;
-    }
-    .btn {
-        padding: 8px 16px;
-        border-radius: 4px;
     }
     .entity-info {
         background-color: #f8f9fa;
@@ -361,138 +279,25 @@ Html::header(
         border-top: 1px solid #e0e0e0;
         background-color: #f8f9fa;
     }
-    /* Estilos para o datepicker com intervalo */
-    /* Styles for datepicker with interval */
-    .ui-datepicker {
-        width: 350px !important;
-        padding: 10px;
-        background: white;
-        border: 1px solid #ddd;
-        border-radius: 8px;
-        box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-        font-family: Arial, sans-serif;
-    }
-    .ui-datepicker-header {
-        background: #f8f9fa;
-        border-radius: 6px 6px 0 0;
-        padding: 10px;
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-    }
-    .ui-datepicker-title {
-        font-weight: bold;
-        display: flex;
-        gap: 10px;
-    }
-    .ui-datepicker-month, .ui-datepicker-year {
-        padding: 3px 5px;
-        border-radius: 3px;
-        border: 1px solid #ced4da;
-    }
-    .ui-datepicker-prev, .ui-datepicker-next {
-        position: relative;
-        top: auto;
-        left: auto;
-        right: auto;
-        cursor: pointer;
-        padding: 3px 8px;
-        border-radius: 3px;
-        background: #f0f0f0;
-    }
-    .ui-datepicker-prev:hover, .ui-datepicker-next:hover {
-        background: #e0e0e0;
-    }
-    .ui-datepicker-calendar {
-        width: 100%;
-        margin-top: 10px;
-    }
-    .ui-datepicker-interval {
-        padding: 10px;
-        background: #f5f5f5;
-        border-bottom: 1px solid #ddd;
+    .interval-helper {
         display: flex;
         flex-wrap: wrap;
         gap: 10px;
         align-items: center;
-        margin: -10px -10px 10px -10px;
-        border-radius: 8px 8px 0 0;
+        margin-top: 8px;
     }
-    .ui-datepicker-interval select {
-        padding: 6px;
-        border: 1px solid #ced4da;
-        border-radius: 4px;
-        background: white;
-        flex-grow: 1;
+    .interval-helper select {
+        max-width: 200px;
     }
-    .ui-datepicker-interval button {
-        padding: 6px 12px;
-        background: #4CAF50;
-        color: white;
-        border: none;
-        border-radius: 4px;
-        cursor: pointer;
-        flex-grow: 1;
-    }
-    .ui-datepicker-interval button:hover {
-        background: #45a049;
-    }
-    
-    /* Estilos para o modal de seleção de perfis */
-    /* Styles for profile selection modal */
-    .profile-modal {
-        display: none;
-        position: fixed;
-        z-index: 1000;
-        left: 0;
-        top: 0;
-        width: 100%;
-        height: 100%;
-        background-color: rgba(0,0,0,0.4);
-    }
-    .profile-modal-content {
-        background-color: #fefefe;
-        margin: 10% auto;
-        padding: 20px;
-        border: 1px solid #888;
-        width: 50%;
-        border-radius: 5px;
-        box-shadow: 0 4px 8px 0 rgba(0,0,0,0.2);
-    }
-    .profile-modal-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        margin-bottom: 20px;
-    }
-    .profile-modal-title {
-        font-size: 1.2em;
-        font-weight: bold;
-    }
-    .profile-modal-close {
-        color: #aaa;
-        font-size: 28px;
-        font-weight: bold;
-        cursor: pointer;
-    }
-    .profile-modal-close:hover {
-        color: black;
+    .select-profile-btn {
+        margin-bottom: 15px;
     }
     .profile-checkboxes {
         max-height: 400px;
         overflow-y: auto;
-        margin-bottom: 20px;
     }
     .profile-checkbox-item {
         margin-bottom: 10px;
-    }
-    .profile-modal-footer {
-        display: flex;
-        justify-content: flex-end;
-        gap: 10px;
-    }
-    .select-profile-btn {
-        margin-bottom: 15px;
     }
 </style>
 
@@ -501,406 +306,254 @@ Html::header(
 <div class='plugin-preventive-maintenance-container'>
     <div class='d-flex justify-content-between align-items-center mb-4'>
         <h2>
-            <i class='fas fa-calendar-check me-2'></i>
-            <?php echo $is_edit ? __('Editar Manutenção') : __('Nova Manutenção'); ?>
+            <i class='ti ti-calendar-check me-2'></i>
+            <?= htmlescape($is_edit ? __('Editar Manutenção') : __('Nova Manutenção')) ?>
         </h2>
-        <a href='preventivemaintenance.php' class='btn btn-outline-primary'>
-            <i class='fas fa-arrow-left me-2'></i><?php echo __('Voltar'); ?>
+        <a href='<?= htmlescape($list_url) ?>' class='btn btn-outline-primary'>
+            <i class='ti ti-arrow-left me-2'></i><?= htmlescape(__('Voltar')) ?>
         </a>
     </div>
 
     <div class='card'>
         <div class='card-body'>
             <form method='post' id='preventive_maintenance_form'>
-                <?php echo Html::hidden('_glpi_csrf_token', ['value' => $token]); ?>
+                <input type='hidden' name='_glpi_csrf_token' value='<?= htmlescape($token) ?>'>
                 <input type='hidden' name='add' value='1'>
-                
+
                 <!-- STEP 1 - Somente seleção da entidade -->
                 <!-- STEP 1 - Only entity selection -->
                 <div id='step1'>
                     <!-- Botão para selecionar perfis técnicos -->
                     <!-- Button to select technician profiles -->
                     <div class="select-profile-btn">
-                        <button type="button" id="selectProfilesBtn" class="btn btn-info">
-                            <i class="fas fa-user-cog me-2"></i><?php echo __('Selecionar Perfis Técnicos'); ?>
+                        <button type="button" class="btn btn-info" data-bs-toggle="modal" data-bs-target="#profileModal">
+                            <i class="ti ti-user-cog me-2"></i><?= htmlescape(__('Selecionar Perfis Técnicos')) ?>
                         </button>
-                        <small class="text-muted d-block mt-1"><?php echo __('Perfis selecionados: ') . implode(', ', $selected_profiles); ?></small>
+                        <small class="text-muted d-block mt-1"><?= htmlescape(__('Perfis selecionados: ') . implode(', ', $selected_profiles)) ?></small>
                     </div>
-                    
+
                     <div class='form-section'>
-                        <label for='entities_id_select'><?php echo __('Entidade'); ?> <span class='required'>*</span></label>
-                        <select name='entities_id_select' id='entities_id_select' class='form-select' required>
-                            <option value=''><?php echo __('Selecione uma entidade'); ?></option>
+                        <label for='entities_id_select'><?= htmlescape(__('Entidade')) ?> <span class='required'>*</span></label>
+                        <select id='entities_id_select' class='form-select'>
+                            <option value=''><?= htmlescape(__('Selecione uma entidade')) ?></option>
                             <?php foreach ($entities as $ent) {
                                 $selected = ($is_edit && $item_data['entities_id'] == $ent['id']) ? 'selected' : '';
-                                echo "<option value='{$ent['id']}' $selected>{$ent['completename']}</option>";
+                                echo "<option value='" . (int) $ent['id'] . "' $selected>" . htmlescape($ent['completename']) . "</option>";
                             } ?>
                         </select>
                     </div>
-                    
+
                     <div class='d-flex justify-content-end mt-4'>
                         <button type='button' class='btn btn-primary' id='nextButton'>
-                            <i class='fas fa-arrow-right me-2'></i><?php echo __('Próximo'); ?>
+                            <i class='ti ti-arrow-right me-2'></i><?= htmlescape(__('Próximo')) ?>
                         </button>
                     </div>
                 </div>
-                
+
                 <!-- STEP 2 - Demais campos -->
                 <!-- STEP 2 - Other fields -->
                 <div id='step2'>
-                    <input type='hidden' name='entities_id' id='entities_id' value='<?php echo $is_edit ? $item_data['entities_id'] : ''; ?>'>
-                    
+                    <input type='hidden' name='entities_id' id='entities_id' value='<?= $is_edit ? (int) $item_data['entities_id'] : '' ?>'>
+
                     <div class='entity-info'>
-                        <strong><?php echo __('Entidade selecionada:'); ?></strong>
+                        <strong><?= htmlescape(__('Entidade selecionada:')) ?></strong>
                         <span id='selected-entity-name'></span>
                         (ID: <span id='selected-entity-id'></span>)
                     </div>
-                    
+
                     <div class='form-section'>
-                        <label for='name'><?php echo __('Nome da Manutenção'); ?> <span class='required'>*</span></label>
-                        <input type='text' name='name' id='name' class='form-control' 
-                               value="<?php echo $is_edit ? htmlspecialchars($item_data['name']) : ''; ?>" required>
+                        <label for='name'><?= htmlescape(__('Nome da Manutenção')) ?> <span class='required'>*</span></label>
+                        <input type='text' name='name' id='name' class='form-control'
+                               value="<?= $is_edit ? htmlescape($item_data['name']) : '' ?>" required>
                     </div>
-                    
+
                     <div class='form-section'>
-                        <label for='technician_id'><?php echo __('Técnico Responsável'); ?> <span class='required'>*</span></label>
+                        <label for='technician_id'><?= htmlescape(__('Técnico Responsável')) ?> <span class='required'>*</span></label>
                         <select name='technician_id' id='technician_id' class='form-select' required>
-                            <option value=''><?php echo __('Selecione um técnico responsável'); ?></option>
-                            <?php 
-                            foreach ($technicians as $id => $name) {
-                                $selected = ($is_edit && $item_data['technician_id'] == $id) ? 'selected' : '';
-                                echo "<option value='{$id}' {$selected}>{$name}</option>";
+                            <option value=''><?= htmlescape(__('Selecione um técnico responsável')) ?></option>
+                            <?php
+                            foreach ($technicians as $tech_id => $tech_name) {
+                                $selected = ($is_edit && $item_data['technician_id'] == $tech_id) ? 'selected' : '';
+                                echo "<option value='" . (int) $tech_id . "' $selected>" . htmlescape($tech_name) . "</option>";
                             }
                             ?>
                         </select>
                     </div>
-                    
+
                     <div class='form-section'>
-                        <label for='items_id'><?php echo __('Computador'); ?> <span class='required'>*</span></label>
+                        <label for='items_id'><?= htmlescape(__('Computador')) ?> <span class='required'>*</span></label>
                         <select name='items_id' id='items_id' class='form-select' required>
-                            <option value=''><?php echo __('Selecione um computador'); ?></option>
-                            <?php 
-                            if ($is_edit) {
-                                $computer->getFromDB($item_data['items_id']);
-                                echo "<option value='{$item_data['items_id']}' selected>{$computer->getName()}</option>";
-                            }
-                            ?>
+                            <option value=''><?= htmlescape(__('Selecione um computador')) ?></option>
                         </select>
                     </div>
-                    
+
                     <div class='form-section'>
-                        <label for='last_maintenance_date'><?php echo __('Última Manutenção'); ?></label>
-                        <input type='text' id='last_maintenance_date' name='last_maintenance_date' 
-                               value="<?php echo $is_edit ? $item_data['last_maintenance_date'] : ''; ?>" 
+                        <label for='last_maintenance_date'><?= htmlescape(__('Última Manutenção')) ?></label>
+                        <input type='date' id='last_maintenance_date' name='last_maintenance_date'
+                               value="<?= $is_edit ? htmlescape($item_data['last_maintenance_date'] ?? '') : '' ?>"
                                class='form-control'>
                     </div>
-                    
+
                     <div class='form-section'>
-                        <label for='next_maintenance_date'><?php echo __('Próxima Manutenção'); ?> <span class='required'>*</span></label>
-                        <input type='text' id='next_maintenance_date' name='next_maintenance_date' 
-                               value="<?php echo $is_edit ? $item_data['next_maintenance_date'] : ''; ?>" 
-                               class='form-control interval-field' required>
+                        <label for='next_maintenance_date'><?= htmlescape(__('Próxima Manutenção')) ?> <span class='required'>*</span></label>
+                        <input type='date' id='next_maintenance_date' name='next_maintenance_date'
+                               value="<?= $is_edit ? htmlescape($item_data['next_maintenance_date'] ?? '') : '' ?>"
+                               class='form-control' required>
+                        <!-- Calcula a próxima data a partir da última + intervalo -->
+                        <!-- Computes next date from last date + interval -->
+                        <div class='interval-helper'>
+                            <span><?= htmlescape(__('Intervalo')) ?>:</span>
+                            <select class='form-select' id='interval_value'>
+                                <?php for ($m = 1; $m <= 12; $m++) {
+                                    $label = $m === 12 ? '1 ano' : ($m === 1 ? '1 mês' : "$m meses");
+                                    echo "<option value='$m'" . ($m === 6 ? ' selected' : '') . ">" . htmlescape($label) . "</option>";
+                                } ?>
+                            </select>
+                            <button type='button' class='btn btn-outline-success' id='apply_interval'>
+                                <?= htmlescape(__('Aplicar')) ?>
+                            </button>
+                        </div>
                     </div>
-                    
+
                     <div class='d-flex justify-content-between mt-4'>
                         <button type='button' class='btn btn-secondary' id='backButton'>
-                            <i class='fas fa-arrow-left me-2'></i><?php echo __('Voltar'); ?>
+                            <i class='ti ti-arrow-left me-2'></i><?= htmlescape(__('Voltar')) ?>
                         </button>
                         <button type='submit' class='btn btn-success'>
-                            <i class='fas fa-save me-2'></i><?php echo $is_edit ? __('Atualizar') : __('Salvar'); ?>
+                            <i class='ti ti-device-floppy me-2'></i><?= htmlescape($is_edit ? __('Atualizar') : __('Salvar')) ?>
                         </button>
                     </div>
                 </div>
             </form>
-            
+
             <!-- Modal para seleção de perfis técnicos -->
             <!-- Modal for technician profiles selection -->
-            <div id="profileModal" class="profile-modal">
-                <div class="profile-modal-content">
-                    <div class="profile-modal-header">
-                        <div class="profile-modal-title"><?php echo __('Selecionar Perfis Técnicos'); ?></div>
-                        <span class="profile-modal-close">&times;</span>
+            <div class="modal fade" id="profileModal" tabindex="-1" aria-hidden="true">
+                <div class="modal-dialog">
+                    <div class="modal-content">
+                        <form method="post" id="profileSelectionForm">
+                            <input type="hidden" name="_glpi_csrf_token" value="<?= htmlescape($token) ?>">
+                            <input type="hidden" name="save_selected_profiles" value="1">
+                            <div class="modal-header">
+                                <h5 class="modal-title"><?= htmlescape(__('Selecionar Perfis Técnicos')) ?></h5>
+                                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                            </div>
+                            <div class="modal-body profile-checkboxes">
+                                <?php foreach ($all_profiles as $prof): ?>
+                                    <div class="profile-checkbox-item">
+                                        <label>
+                                            <input type="checkbox" name="profiles[]" value="<?= htmlescape($prof['name']) ?>"
+                                                <?= in_array($prof['name'], $selected_profiles) ? 'checked' : '' ?>>
+                                            <?= htmlescape($prof['name']) ?>
+                                        </label>
+                                    </div>
+                                <?php endforeach; ?>
+                            </div>
+                            <div class="modal-footer">
+                                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal"><?= htmlescape(__('Cancelar')) ?></button>
+                                <button type="submit" class="btn btn-primary"><?= htmlescape(__('Salvar Seleção')) ?></button>
+                            </div>
+                        </form>
                     </div>
-                    <form method="post" id="profileSelectionForm">
-                        <?php echo Html::hidden('_glpi_csrf_token', ['value' => $token]); ?>
-                        <input type="hidden" name="save_selected_profiles" value="1">
-                        
-                        <div class="profile-checkboxes">
-                            <?php foreach ($all_profiles as $prof): ?>
-                                <div class="profile-checkbox-item">
-                                    <label>
-                                        <input type="checkbox" name="profiles[]" value="<?php echo $prof['name']; ?>"
-                                            <?php echo in_array($prof['name'], $selected_profiles) ? 'checked' : ''; ?>>
-                                        <?php echo $prof['name']; ?>
-                                    </label>
-                                </div>
-                            <?php endforeach; ?>
-                        </div>
-                        
-                        <div class="profile-modal-footer">
-                            <button type="button" class="btn btn-secondary" id="cancelProfileSelection"><?php echo __('Cancelar'); ?></button>
-                            <button type="submit" class="btn btn-primary"><?php echo __('Salvar Seleção'); ?></button>
-                        </div>
-                    </form>
                 </div>
             </div>
-            
-            <!-- Inclusão de bibliotecas JavaScript -->
-            <!-- JavaScript libraries inclusion -->
-            <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
-            <script src="https://code.jquery.com/ui/1.12.1/jquery-ui.min.js"></script>
-            <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery-ui-i18n/1.12.1/jquery-ui-i18n.min.js"></script>
-            
-            <!-- Script JavaScript para funcionalidades do formulário -->
-            <!-- JavaScript script for form functionalities -->
+
+            <!-- Script JavaScript para funcionalidades do formulário (usa o jQuery do GLPI) -->
+            <!-- JavaScript for form features (uses GLPI's bundled jQuery) -->
             <script>
-            const computersData = <?php echo json_encode(array_values($all_computers)); ?>;
-            const blockedComputers = <?php echo json_encode($blocked_computers); ?>;
-            
-            $(document).ready(function() {
-                // Configuração de localização para português
-                // Portuguese localization setup
-                $.datepicker.regional['pt-BR'] = {
-                    closeText: 'Fechar',
-                    prevText: '&#x3C;Anterior',
-                    nextText: 'Próximo&#x3E;',
-                    currentText: 'Hoje',
-                    monthNames: ['Janeiro','Fevereiro','Março','Abril','Maio','Junho',
-                    'Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'],
-                    monthNamesShort: ['Jan','Fev','Mar','Abr','Mai','Jun',
-                    'Jul','Ago','Set','Out','Nov','Dez'],
-                    dayNames: ['Domingo','Segunda-feira','Terça-feira','Quarta-feira','Quinta-feira','Sexta-feira','Sábado'],
-                    dayNamesShort: ['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'],
-                    dayNamesMin: ['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'],
-                    weekHeader: 'Sm',
-                    dateFormat: 'yy-mm-dd',
-                    firstDay: 0,
-                    isRTL: false,
-                    showMonthAfterYear: false,
-                    yearSuffix: ''};
-                $.datepicker.setDefaults($.datepicker.regional['pt-BR']);
+            $(function() {
+                const computersData = <?= json_encode($computers_data, $json_opts) ?>;
+                const editComputerId = <?= $is_edit ? (int) $item_data['items_id'] : 0 ?>;
+                const messages = <?= json_encode([
+                    'select_entity'  => __('Selecione uma entidade'),
+                    'no_computer'    => __('Nenhum computador disponível'),
+                    'last_date'      => __('Informe a data da última manutenção'),
+                    'select_profile' => __('Selecione pelo menos um perfil técnico'),
+                    'entity'         => __('Entidade'),
+                ], $json_opts) ?>;
 
-                // Inicializa o datepicker para a última manutenção
-                // Initializes datepicker for last maintenance
-                $("#last_maintenance_date").datepicker({
-                    dateFormat: 'yy-mm-dd',
-                    showAnim: 'fadeIn',
-                    changeMonth: true,
-                    changeYear: true,
-                    showButtonPanel: true,
-                    onSelect: function(dateText) {
-                        $(this).val(dateText);
-                    },
-                    beforeShow: function(input, inst) {
-                        setTimeout(function() {
-                            var button = inst.dpDiv.find('.ui-datepicker-current');
-                            button.unbind('click').click(function() {
-                                var today = new Date();
-                                var formattedDate = $.datepicker.formatDate('yy-mm-dd', today);
-                                $(input).val(formattedDate);
-                                inst.dpDiv.hide();
-                            });
-                        }, 1);
-                    }
-                });
-                
-                // Inicializa o datepicker para a próxima manutenção com intervalo
-                // Initializes datepicker for next maintenance with interval
-                $("#next_maintenance_date").datepicker({
-                    dateFormat: 'yy-mm-dd',
-                    showAnim: 'fadeIn',
-                    changeMonth: true,
-                    changeYear: true,
-                    showButtonPanel: true,
-                    onSelect: function(dateText) {
-                        $(this).val(dateText);
-                    },
-                    beforeShow: function(input, inst) {
-                        setTimeout(function() {
-                            // Configura o botão "Hoje"
-                            // Configures "Today" button
-                            var button = inst.dpDiv.find('.ui-datepicker-current');
-                            button.unbind('click').click(function() {
-                                var today = new Date();
-                                var formattedDate = $.datepicker.formatDate('yy-mm-dd', today);
-                                $(input).val(formattedDate);
-                                inst.dpDiv.hide();
-                            });
-                            
-                            // Adiciona controles de intervalo
-                            // Adds interval controls
-                            var dpDiv = $(inst.dpDiv);
-                            dpDiv.find('.ui-datepicker-interval').remove();
-                            
-                            var controls = $(
-                                '<div class="ui-datepicker-interval">' +
-                                '  <span><?php echo __("Intervalo"); ?>:</span>' +
-                                '  <select class="interval-value">' +
-                                '    <option value="1">1 mês</option>' +
-                                '    <option value="2">2 meses</option>' +
-                                '    <option value="3">3 meses</option>' +
-                                '    <option value="4">4 meses</option>' +
-                                '    <option value="5">5 meses</option>' +
-                                '    <option value="6" selected>6 meses</option>' +
-                                '    <option value="7">7 meses</option>' +
-                                '    <option value="8">8 meses</option>' +
-                                '    <option value="9">9 meses</option>' +
-                                '    <option value="10">10 meses</option>' +
-                                '    <option value="11">11 meses</option>' +
-                                '    <option value="12">1 ano</option>' +
-                                '  </select>' +
-                                '  <button type="button" class="apply-interval"><?php echo __("Aplicar"); ?></button>' +
-                                '</div>'
-                            );
-                            
-                            dpDiv.prepend(controls);
-                            
-                            dpDiv.find('.apply-interval').click(function() {
-                                var lastDate = $("#last_maintenance_date").val();
-                                if (!lastDate) {
-                                    alert('<?php echo __("Informe a data da última manutenção"); ?>');
-                                    return;
-                                }
-                                
-                                var months = parseInt(dpDiv.find('.interval-value').val());
-                                var date = new Date(lastDate);
-                                date.setMonth(date.getMonth() + months);
-                                
-                                // Ajusta para o final do mês se necessário
-                                // Adjusts to end of month if needed
-                                var originalDay = new Date(lastDate).getDate();
-                                if (date.getDate() !== originalDay) {
-                                    date.setDate(0);
-                                }
-                                
-                                var formatted = $.datepicker.formatDate('yy-mm-dd', date);
-                                $("#next_maintenance_date").val(formatted).datepicker('hide');
-                            });
-                        }, 1);
-                    }
-                });
-
-                <?php if ($is_edit) { ?>
-                    // Se estiver editando, configura os valores iniciais
-                    // If editing, sets initial values
-                    const entityId = <?php echo $item_data['entities_id']; ?>;
-                    const entityName = $(`#entities_id_select option[value='${entityId}']`).text();
-                    
-                    $('#entities_id').val(entityId);
-                    $('#selected-entity-name').text('Entidade: ' + entityName);
-                    $('#selected-entity-id').text(entityId);
-                    
-                    $('#step1').hide();
-                    $('#step2').show();
-                <?php } ?>
-                
-                // Evento do botão Próximo
-                // Next button event
-                $('#nextButton').click(function() {
-                    if (!$('#entities_id_select').val()) {
-                        alert('<?php echo __("Selecione uma entidade"); ?>');
-                        return;
-                    }
-                    
-                    const entityId = $('#entities_id_select').val();
-                    const entityName = $('#entities_id_select option:selected').text();
-                    
-                    $('#entities_id').val(entityId);
-                    $('#selected-entity-name').text('Entidade: ' + entityName);
-                    $('#selected-entity-id').text(entityId);
-                    loadComputers(entityId);
-                    
-                    $('#step1').hide();
-                    $('#step2').show();
-                });
-                
-                // Evento do botão Voltar
-                // Back button event
-                $('#backButton').click(function() {
-                    $('#step2').hide();
-                    $('#step1').show();
-                });
-                
                 // Carrega os computadores disponíveis para a entidade selecionada
                 // Loads available computers for selected entity
                 function loadComputers(entityId) {
                     const select = $('#items_id');
                     select.find('option').not(':first').remove();
-                    
-                    const filteredComputers = computersData.filter(comp => {
-                        return comp.entities_id == entityId && 
-                               (!blockedComputers.includes(comp.id) || <?php echo $is_edit ? 'comp.id == ' . $item_data['items_id'] : 'false'; ?>);
-                    });
-                    
-                    if (filteredComputers.length > 0) {
-                        filteredComputers.forEach(comp => {
-                            select.append(new Option(comp.name, comp.id));
+
+                    const filtered = computersData.filter(comp => comp.entities_id == entityId);
+                    if (filtered.length > 0) {
+                        filtered.forEach(comp => {
+                            select.append(new Option(comp.name, comp.id, false, comp.id === editComputerId));
                         });
                     } else {
-                        const option = new Option('<?php echo __("Nenhum computador disponível"); ?>', '');
+                        const option = new Option(messages.no_computer, '');
                         option.disabled = true;
                         select.append(option);
                     }
                 }
-                
-                // ==============================================
-                // CÓDIGO PARA O BOTÃO DE SELEÇÃO DE PERFIS TÉCNICOS
-                // CODE FOR TECHNICIAN PROFILES SELECTION BUTTON
-                // ==============================================
-                
-                // Abre o modal de seleção de perfis
-                // Opens profile selection modal
-                $('#selectProfilesBtn').click(function() {
-                    $('#profileModal').show();
-                });
-                
-                // Fecha o modal quando clica no X
-                // Closes modal when clicking X
-                $('.profile-modal-close').click(function() {
-                    $('#profileModal').hide();
-                });
-                
-                // Fecha o modal quando clica em Cancelar
-                // Closes modal when clicking Cancel
-                $('#cancelProfileSelection').click(function() {
-                    $('#profileModal').hide();
-                });
-                
-                // Fecha o modal quando clica fora da área de conteúdo
-                // Closes modal when clicking outside content area
-                $(window).click(function(event) {
-                    if (event.target == $('#profileModal')[0]) {
-                        $('#profileModal').hide();
-                    }
-                });
-                
-                // Processa o formulário de seleção de perfis
-                // Processes profile selection form
-                $('#profileSelectionForm').submit(function(e) {
-                    e.preventDefault();
-                    
-                    // Verifica se pelo menos um perfil foi selecionado
-                    // Checks if at least one profile was selected
-                    if ($('#profileSelectionForm input[name="profiles[]"]:checked').length === 0) {
-                        alert('<?php echo __("Selecione pelo menos um perfil técnico"); ?>');
+
+                function goToStep2(entityId) {
+                    const entityName = $('#entities_id_select option[value="' + entityId + '"]').text();
+                    $('#entities_id').val(entityId);
+                    $('#selected-entity-name').text(messages.entity + ': ' + entityName);
+                    $('#selected-entity-id').text(entityId);
+                    loadComputers(entityId);
+                    $('#step1').hide();
+                    $('#step2').show();
+                }
+
+                <?php if ($is_edit) { ?>
+                    // Se estiver editando, vai direto para o passo 2
+                    // If editing, goes straight to step 2
+                    goToStep2(<?= (int) $item_data['entities_id'] ?>);
+                <?php } ?>
+
+                // Evento do botão Próximo
+                // Next button event
+                $('#nextButton').on('click', function() {
+                    const entityId = $('#entities_id_select').val();
+                    if (!entityId) {
+                        alert(messages.select_entity);
                         return;
                     }
-                    
-                    // Envia o formulário via AJAX
-                    // Submits form via AJAX
-                    $.ajax({
-                        url: window.location.href,
-                        type: 'POST',
-                        data: $(this).serialize(),
-                        success: function(response) {
-                            // Recarrega a página para atualizar a lista de técnicos
-                            // Reloads page to update technicians list
-                            window.location.reload();
-                        },
-                        error: function() {
-                            alert('<?php echo __("Erro ao salvar a seleção de perfis"); ?>');
-                        }
-                    });
+                    goToStep2(entityId);
+                });
+
+                // Evento do botão Voltar
+                // Back button event
+                $('#backButton').on('click', function() {
+                    $('#step2').hide();
+                    $('#step1').show();
+                });
+
+                // Aplica o intervalo (em meses) a partir da última manutenção
+                // Applies the interval (in months) from the last maintenance
+                $('#apply_interval').on('click', function() {
+                    const lastDate = $('#last_maintenance_date').val();
+                    if (!lastDate) {
+                        alert(messages.last_date);
+                        return;
+                    }
+
+                    const months = parseInt($('#interval_value').val(), 10);
+                    const [y, m, d] = lastDate.split('-').map(Number);
+                    const date = new Date(y, m - 1 + months, d);
+
+                    // Ajusta para o final do mês se necessário
+                    // Adjusts to end of month if needed
+                    if (date.getDate() !== d) {
+                        date.setDate(0);
+                    }
+
+                    const pad = n => String(n).padStart(2, '0');
+                    $('#next_maintenance_date').val(date.getFullYear() + '-' + pad(date.getMonth() + 1) + '-' + pad(date.getDate()));
+                });
+
+                // Verifica se pelo menos um perfil foi selecionado
+                // Checks if at least one profile was selected
+                $('#profileSelectionForm').on('submit', function(e) {
+                    if ($(this).find('input[name="profiles[]"]:checked').length === 0) {
+                        e.preventDefault();
+                        alert(messages.select_profile);
+                    }
                 });
             });
             </script>
@@ -908,7 +561,7 @@ Html::header(
         <!-- Rodapé personalizado -->
         <!-- Custom footer -->
         <div class="custom-footer">
-            <i class="fas fa-code"></i> <?= __('Desenvolvido por WIDA - Work Information Developments and Analytics') ?>
+            <i class="ti ti-code"></i> <?= htmlescape(__('Desenvolvido por WIDA - Work Information Developments and Analytics')) ?>
         </div>
     </div>
 </div>
@@ -917,4 +570,3 @@ Html::header(
 // Exibe o rodapé do GLPI
 // Displays GLPI footer
 Html::footer();
-?>

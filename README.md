@@ -1,7 +1,7 @@
 # 🔧 Plugin de Manutenção Preventiva para GLPI
 
 [![Licença GPLv2+](https://img.shields.io/badge/license-GPLv2+-blue.svg)](https://www.gnu.org/licenses/gpl-2.0.html)
-[![Versão GLPI](https://img.shields.io/badge/GLPI-9.x%2F10.x-success)](https://glpi-project.org)
+[![Versão GLPI](https://img.shields.io/badge/GLPI-11.0.x-success)](https://glpi-project.org)
 [![GitHub Release](https://img.shields.io/github/v/release/willoliveiras/glpi-preventive-maintenance)](https://github.com/willoliveiras/glpi-preventive-maintenance/releases)
 [![GitHub Stars](https://img.shields.io/github/stars/willoliveiras/glpi-preventive-maintenance?style=social)](https://github.com/willoliveiras/glpi-preventive-maintenance/stargazers)
 
@@ -50,9 +50,12 @@ Plugin para gestão automatizada de manutenções preventivas no GLPI
  🚀 Instalação
 --
 
+**Requisitos:** GLPI 11.0.x e PHP 8.2+ (para GLPI 9.x/10.x use a versão 1.x do plugin)
+
 1. Baixe a última versão [aqui](https://github.com/willoliveiras/glpi-preventive-maintenance/releases)
 2. Extraia para: `/glpi/plugins/preventivemaintenance`
-3. Ative em: `Configurações > Plugins`
+3. Instale e ative em: `Configurar > Plugins`
+   - Atualizando da 1.x: substitua os arquivos e clique em **Atualizar**; as tabelas existentes são migradas automaticamente
 4. Configure: Administração > Perfis > [seu usuario]> Manutenção Preventiva
 
 

@@ -59,115 +59,78 @@
 // Verificação de segurança
 // Security check
 if (!defined('GLPI_ROOT')) {
-   die("Sorry. You can't access this file directly");
+    die("Sorry. You can't access this file directly");
 }
 
-// Classe para gerenciar perfil/permissões do plugin
-// Class to manage plugin profile/permissions
-class PluginPreventivemaintenanceProfile extends Profile {
-   
-   public static $rightname = 'profile';
+// Classe para gerenciar perfil/permissões do plugin (aba em Perfis)
+// Class to manage plugin profile/permissions (tab on Profiles)
+class PluginPreventivemaintenanceProfile extends CommonGLPI
+{
+    public static $rightname = 'profile';
 
-   // Define o nome da aba para perfis
-   // Defines tab name for profiles
-   public function getTabNameForItem(CommonGLPI $item, $withtemplate = 0) {
-      if ($item->getType() == 'Profile' && $item->getField('interface') != 'helpdesk') {
-         return __('Preventive Maintenance', 'preventivemaintenance');
-      }
-      return '';
-   }
-
-    // Adicione esta função à sua classe
-    public static function userLoginHook($user) {
-        self::initProfile();
+    // Define o nome da aba para perfis
+    // Defines tab name for profiles
+    public function getTabNameForItem(CommonGLPI $item, $withtemplate = 0)
+    {
+        if ($item instanceof Profile && $item->getField('interface') !== 'helpdesk') {
+            return self::createTabEntry(
+                __('Preventive Maintenance', 'preventivemaintenance'),
+                0,
+                null,
+                PluginPreventivemaintenancePreventivemaintenance::getIcon()
+            );
+        }
+        return '';
     }
 
+    // Exibe o conteúdo da aba de perfil
+    // Displays profile tab content
+    public static function displayTabContentForItem(CommonGLPI $item, $tabnum = 1, $withtemplate = 0)
+    {
+        if ($item instanceof Profile) {
+            self::showForProfile((int) $item->getID());
+        }
+        return true;
+    }
 
-   // Exibe o conteúdo da aba de perfil
-   // Displays profile tab content
-   public static function displayTabContentForItem(CommonGLPI $item, $tabnum = 1, $withtemplate = 0) {
-      if ($item->getType() == 'Profile') {
-         $prof = new self();
-         $prof->showForm($item->getID());
-      }
-      return true;
-   }
+    // Mostra formulário de direitos
+    // Shows rights form
+    public static function showForProfile(int $profiles_id): void
+    {
+        $profile = new Profile();
+        if (!$profile->getFromDB($profiles_id)) {
+            return;
+        }
 
-   // Mostra formulário de direitos
-   // Shows rights form
-   public function showForm($profiles_id, $openform = true, $closeform = true) {
-      global $CFG_GLPI;
+        $canedit = Session::haveRightsOr(self::$rightname, [CREATE, UPDATE, PURGE]);
 
-      echo "<div class='firstbloc'>";
-      $canedit = Session::haveRightsOr(self::$rightname, [CREATE, UPDATE]);
+        echo "<div class='firstbloc'>";
+        if ($canedit) {
+            echo "<form method='post' action='" . htmlescape(Profile::getFormURL()) . "'>";
+        }
 
-      if ($canedit && $openform) {
-         echo "<form method='post' action='" . Toolbox::getItemTypeFormURL('Profile') . "'>";
-      }
+        $profile->displayRightsChoiceMatrix(
+            [
+                [
+                    'itemtype' => PluginPreventivemaintenancePreventivemaintenance::class,
+                    'label'    => __('Preventive Maintenance', 'preventivemaintenance'),
+                    'field'    => PluginPreventivemaintenancePreventivemaintenance::$rightname,
+                ],
+            ],
+            [
+                'canedit'       => $canedit,
+                'default_class' => 'tab_bg_2',
+                'title'         => __('General'),
+            ]
+        );
 
-      $profile = new Profile();
-      $profile->getFromDB($profiles_id);
-
-      $rights = [
-         [
-            'itemtype' => 'PluginPreventivemaintenancePreventivemaintenance',
-            'label'    => __('Preventive Maintenance', 'preventivemaintenance'),
-            'field'    => 'plugin_preventivemaintenance'
-         ]
-      ];
-
-      $profile->displayRightsChoiceMatrix(
-         $rights,
-         [
-            'canedit'       => $canedit,
-            'default_class' => 'tab_bg_2',
-            'title'         => __('General')
-         ]
-      );
-
-      echo "</table>";
-
-      if ($canedit && $closeform) {
-         echo "<div class='center'>";
-         echo Html::hidden('id', ['value' => $profiles_id]);
-         echo Html::submit(_sx('button', 'Save'), ['name' => 'update', 'class' => 'btn btn-primary']);
-         echo "</div>";
-         Html::closeForm();
-      }
-
-      echo "</div>";
-   }
-
-   // Define os direitos padrão para novos perfis
-   // Defines default rights for new profiles
-   public static function initProfile() {
-   global $DB;
-
-   $profile = new self();
-   $dbu = new DbUtils();
-
-   $default_rights = ['plugin_preventivemaintenance'];
-
-   // Adiciona direitos para todos os perfis se não existirem
-   foreach ($default_rights as $right) {
-      if ($dbu->countElementsInTable("glpi_profilerights", ["name" => $right]) == 0) {
-         ProfileRight::addProfileRights([$right]);
-         
-         // Define permissões padrão para todos os perfis
-         foreach ($DB->request('glpi_profiles') as $profile_data) {
-            $rights = 0;
-            // Define permissões padrão baseadas no tipo de perfil
-            if ($profile_data['interface'] == 'central') {
-               $rights = CREATE | READ | UPDATE | DELETE; // Ajuste conforme necessário
-            }
-            $DB->updateOrInsert('glpi_profilerights', [
-               'rights' => $rights
-            ], [
-               'profiles_id' => $profile_data['id'],
-               'name' => $right
-            ]);
-         }
-      }
-   }
-}
+        if ($canedit) {
+            echo "<div class='center'>";
+            echo Html::hidden('id', ['value' => $profiles_id]);
+            echo Html::submit(_sx('button', 'Save'), ['name' => 'update', 'class' => 'btn btn-primary']);
+            echo "</div>";
+            Html::closeForm();
+        }
+        echo "</div>";
+    }
 }

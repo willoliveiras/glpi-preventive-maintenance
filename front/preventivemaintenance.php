@@ -56,515 +56,149 @@
  * -------------------------------------------------------------------------
  */
 
-// Inclui arquivos necessários do GLPI
-include('../../../inc/includes.php');
-
-// Verificação de segurança
-if (!defined('GLPI_ROOT')) {
-    die("Sorry. You can't access this file directly");
-}
+// No GLPI 11 este script é carregado pelo roteador do GLPI (inc/includes.php não é mais necessário)
+// On GLPI 11 this script is loaded by the GLPI router (inc/includes.php is no longer needed)
 
 // Verifica permissões
+// Checks permissions
 Session::checkRight('plugin_preventivemaintenance', READ);
 
-// Instancia a classe principal
-$pm = new PluginPreventivemaintenancePreventivemaintenance();
-
-// Função para obter configuração
-function getPluginConfig($name) {
-    global $DB;
-    
-    $criteria = [
-        'SELECT' => ['value'],
-        'FROM' => 'glpi_plugin_preventivemaintenance_config',
-        'WHERE' => ['name' => $name],
-        'LIMIT' => 1
-    ];
-    
-    $iterator = $DB->request($criteria);
-    
-    if (count($iterator)) {
-        $data = $iterator->current();
-        return $data['value'];
-    }
-    
-    return false;
-}
-
-// Função para atualizar configuração
-function updatePluginConfig($name, $value) {
-    global $DB;
-    
-    $existing = getPluginConfig($name);
-    $now = date('Y-m-d H:i:s');
-    
-    if ($existing !== false) {
-        return $DB->update('glpi_plugin_preventivemaintenance_config', [
-            'value' => $value,
-            'date_mod' => $now
-        ], [
-            'name' => $name
-        ]);
-    } else {
-        return $DB->insert('glpi_plugin_preventivemaintenance_config', [
-            'name' => $name,
-            'value' => $value,
-            'date_creation' => $now,
-            'date_mod' => $now
-        ]);
-    }
-}
+$pm       = new PluginPreventivemaintenancePreventivemaintenance();
+$list_url = PluginPreventivemaintenancePreventivemaintenance::getSearchURL();
+$form_url = PluginPreventivemaintenancePreventivemaintenance::getFormURL();
 
 // Obtém configuração do Auto Ticket
-$auto_ticket = getPluginConfig('auto_ticket');
-if ($auto_ticket === false) {
-    $auto_ticket = '0';
-    updatePluginConfig('auto_ticket', $auto_ticket);
+// Gets Auto Ticket configuration
+if (PluginPreventivemaintenancePreventivemaintenance::getConfigValue('auto_ticket') === null) {
+    PluginPreventivemaintenancePreventivemaintenance::setConfigValue('auto_ticket', '0');
 }
-$auto_ticket_enabled = ($auto_ticket === '1');
+$auto_ticket_enabled = PluginPreventivemaintenancePreventivemaintenance::isAutoTicketEnabled();
 
-// Inicializa filtros
-$filters = [
-    'status' => 'all',
-    'date_from' => '',
-    'date_to' => '',
-    'technician' => 0,
-    'entity' => 0
-];
-
-// Atualiza filtros da requisição
-if (isset($_GET['status'])) {
-    $filters['status'] = $_GET['status'];
-}
-if (isset($_GET['date_from'])) {
-    $filters['date_from'] = $_GET['date_from'];
-}
-if (isset($_GET['date_to'])) {
-    $filters['date_to'] = $_GET['date_to'];
-}
-if (isset($_GET['technician'])) {
-    $filters['technician'] = (int)$_GET['technician'];
-}
-if (isset($_GET['entity'])) {
-    $filters['entity'] = (int)$_GET['entity'];
-}
-
-// Processa exclusão
-if (isset($_GET['delete'])) {
-    $id = (int)$_GET['delete'];
-    if ($id > 0 && $pm->canDelete()) {
-        if ($pm->delete(['id' => $id])) {
-            Session::addMessageAfterRedirect(
-                __('Registro apagado com sucesso!'),
-                true,
-                INFO
-            );
+// Processa exclusão (POST + token CSRF)
+// Processes deletion (POST + CSRF token)
+if (isset($_POST['delete'])) {
+    $id = (int) $_POST['delete'];
+    if ($id > 0 && $pm->can($id, PURGE)) {
+        if ($pm->delete(['id' => $id], true)) {
+            Session::addMessageAfterRedirect(__('Registro apagado com sucesso!'), true, INFO);
         } else {
-            Session::addMessageAfterRedirect(
-                __('Falha ao apagar registro!'),
-                false,
-                ERROR
-            );
+            Session::addMessageAfterRedirect(__('Falha ao apagar registro!'), false, ERROR);
         }
-        Html::redirect('preventivemaintenance.php');
     }
+    Html::redirect($list_url);
 }
 
-// Processa toggle do Auto Ticket
-if (isset($_GET['toggle_auto_ticket'])) {
+// Processa toggle do Auto Ticket (POST + token CSRF)
+// Processes Auto Ticket toggle (POST + CSRF token)
+if (isset($_POST['toggle_auto_ticket'])) {
+    Session::checkRight('plugin_preventivemaintenance', UPDATE);
     $new_value = $auto_ticket_enabled ? '0' : '1';
-    if (updatePluginConfig('auto_ticket', $new_value)) {
-        $auto_ticket_enabled = !$auto_ticket_enabled;
+    if (PluginPreventivemaintenancePreventivemaintenance::setConfigValue('auto_ticket', $new_value)) {
         Session::addMessageAfterRedirect(
-            $auto_ticket_enabled ? __('Auto ticket ativado com sucesso!') : __('Auto ticket desativado com sucesso!'),
+            $new_value === '1' ? __('Auto ticket ativado com sucesso!') : __('Auto ticket desativado com sucesso!'),
             true,
             INFO
         );
     } else {
-        Session::addMessageAfterRedirect(
-            __('Falha ao atualizar a configuração do auto ticket!'),
-            false,
-            ERROR
-        );
+        Session::addMessageAfterRedirect(__('Falha ao atualizar a configuração do auto ticket!'), false, ERROR);
     }
-    Html::redirect('preventivemaintenance.php');
+    Html::redirect($list_url);
 }
 
-// Função para verificar tickets abertos
-function hasOpenMaintenanceTicket($computer_id, $maintenance_name) {
-    global $DB;
-    
-    if (empty($computer_id) || !is_numeric($computer_id) || empty($maintenance_name)) {
-        return false;
-    }
-    
-    try {
-        $criteria = [
-            'SELECT' => ['id'],
-            'FROM' => 'glpi_tickets',
-            'WHERE' => [
-                'items_id' => (int)$computer_id,
-                'itemtype' => 'Computer',
-                'name' => ['LIKE', '%' . $DB->escape($maintenance_name) . '%'],
-                ['NOT' => ['status' => [Ticket::CLOSED, Ticket::SOLVED]]]
-            ],
-            'LIMIT' => 1
-        ];
-        
-        $iterator = $DB->request($criteria);
-        
-        if (count($iterator)) {
-            return true;
-        }
-        
-        $criteria = [
-            'SELECT' => ['id'],
-            'FROM' => 'glpi_plugin_preventivemaintenance_tickets',
-            'WHERE' => [
-                'computer_id' => (int)$computer_id,
-                'maintenance_name' => $maintenance_name
-            ],
-            'LIMIT' => 1
-        ];
-        
-        $iterator = $DB->request($criteria);
-        
-        return count($iterator) > 0;
-    } catch (Exception $e) {
-        Toolbox::logError("Erro ao verificar tickets existentes: " . $e->getMessage());
-        return false;
-    }
+// Inicializa filtros
+// Initializes filters
+$filters = [
+    'status'     => in_array($_GET['status'] ?? '', ['ontime', 'warning', 'urgent', 'undefined'], true) ? $_GET['status'] : 'all',
+    'date_from'  => preg_match('/^\d{4}-\d{2}-\d{2}$/', $_GET['date_from'] ?? '') ? $_GET['date_from'] : '',
+    'date_to'    => preg_match('/^\d{4}-\d{2}-\d{2}$/', $_GET['date_to'] ?? '') ? $_GET['date_to'] : '',
+    'technician' => (int) ($_GET['technician'] ?? 0),
+    'entity'     => (int) ($_GET['entity'] ?? 0),
+];
+
+// Atualiza manutenções cujos tickets foram solucionados e cria tickets automáticos
+// Updates maintenances whose tickets were solved and creates automatic tickets
+PluginPreventivemaintenancePreventivemaintenance::cleanResolvedMaintenanceTickets();
+foreach (PluginPreventivemaintenancePreventivemaintenance::processAutoTickets() as $maintenance_name) {
+    Session::addMessageAfterRedirect(
+        htmlescape(sprintf(__('Ticket criado automaticamente para manutenção preventiva: %s'), $maintenance_name)),
+        true,
+        INFO
+    );
 }
 
-// Função para registrar ticket
-function registerMaintenanceTicket($ticket_id, $computer_id, $maintenance_name) {
-    global $DB;
-    
-    try {
-        $DB->insert('glpi_plugin_preventivemaintenance_tickets', [
-            'ticket_id' => (int)$ticket_id,
-            'computer_id' => (int)$computer_id,
-            'maintenance_name' => $maintenance_name,
-            'date_creation' => date('Y-m-d H:i:s')
-        ]);
-        return true;
-    } catch (Exception $e) {
-        Toolbox::logError("Erro ao registrar o ticket: " . $e->getMessage());
-        return false;
-    }
-}
-
-// Função para atualizar manutenção
-function updateMaintenanceOnTicketResolution($ticket_id) {
-    global $DB;
-    
-    try {
-        $criteria = [
-            'SELECT' => ['computer_id', 'maintenance_name'],
-            'FROM' => 'glpi_plugin_preventivemaintenance_tickets',
-            'WHERE' => [
-                'ticket_id' => (int)$ticket_id
-            ],
-            'LIMIT' => 1
-        ];
-        
-        $iterator = $DB->request($criteria);
-        
-        if (count($iterator)) {
-            $data = $iterator->current();
-            $computer_id = $data['computer_id'];
-            $maintenance_name = $data['maintenance_name'];
-            
-            $pm = new PluginPreventivemaintenancePreventivemaintenance();
-            $maintenance = $pm->find([
-                'items_id' => $computer_id,
-                'name' => $maintenance_name
-            ]);
-            
-            if (count($maintenance)) {
-                $maintenance_data = current($maintenance);
-                $maintenance_id = $maintenance_data['id'];
-                
-                $ticket = new Ticket();
-                if ($ticket->getFromDB($ticket_id)) {
-                    $solvedate = $ticket->getField('solvedate');
-                    
-                    if (!empty($solvedate)) {
-                        $last_date = $maintenance_data['last_maintenance_date'];
-                        $next_date = $maintenance_data['next_maintenance_date'];
-                        
-                        if (!empty($last_date) && !empty($next_date)) {
-                            $last_timestamp = strtotime($last_date);
-                            $next_timestamp = strtotime($next_date);
-                            $interval = $next_timestamp - $last_timestamp;
-                            
-                            $new_next_date = date('Y-m-d H:i:s', strtotime($solvedate) + $interval);
-                            
-                            $input = [
-                                'id' => $maintenance_id,
-                                'name' => $maintenance_name,
-                                'last_maintenance_date' => $solvedate,
-                                'next_maintenance_date' => $new_next_date
-                            ];
-                            
-                            if ($pm->update($input)) {
-                                $DB->delete('glpi_plugin_preventivemaintenance_tickets', [
-                                    'ticket_id' => $ticket_id
-                                ]);
-                                return true;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        return false;
-    } catch (Exception $e) {
-        Toolbox::logError("Erro ao atualizar a manutenção: " . $e->getMessage());
-        return false;
-    }
-}
-
-// Função para limpar tickets resolvidos
-function cleanResolvedMaintenanceTickets() {
-    global $DB;
-    
-    try {
-        $criteria = [
-            'SELECT' => ['glpi_tickets.id', 'glpi_tickets.solvedate'],
-            'FROM' => 'glpi_tickets',
-            'INNER JOIN' => [
-                'glpi_plugin_preventivemaintenance_tickets' => [
-                    'ON' => [
-                        'glpi_plugin_preventivemaintenance_tickets' => 'ticket_id',
-                        'glpi_tickets' => 'id'
-                    ]
-                ]
-            ],
-            'WHERE' => [
-                'glpi_tickets.status' => [Ticket::CLOSED, Ticket::SOLVED]
-            ]
-        ];
-        
-        $iterator = $DB->request($criteria);
-        
-        foreach ($iterator as $data) {
-            updateMaintenanceOnTicketResolution($data['id']);
-            
-            $DB->delete('glpi_plugin_preventivemaintenance_tickets', [
-                'ticket_id' => $data['id']
-            ]);
-        }
-        
-        return true;
-    } catch (Exception $e) {
-        Toolbox::logError("Erro ao limpar tickets resolvidos: " . $e->getMessage());
-        return false;
-    }
-}
-
-// Função para criar ticket
-function createMaintenanceTicket($computer_id, $maintenance_name, $technician_id) {
-    if (hasOpenMaintenanceTicket($computer_id, $maintenance_name)) {
-        return false;
-    }
-    
-    $ticket = new Ticket();
-    
-    $input = [
-        'name' => sprintf(__('Preventive maintenance required: %s'), $maintenance_name),
-        'content' => sprintf(__('Computer requires preventive maintenance for: %s'), $maintenance_name),
-        'items_id' => (int)$computer_id,
-        'itemtype' => 'Computer',
-        'type' => Ticket::INCIDENT_TYPE,
-        'status' => Ticket::INCOMING,
-        'urgency' => 5,
-        'impact' => 5,
-        'priority' => 5,
-        'requesttypes_id' => 1,
-        'users_id_recipient' => Session::getLoginUserID(),
-        'entities_id' => $_SESSION['glpiactive_entity'],
-        'date' => date('Y-m-d H:i:s')
-    ];
-    
-    if (!empty($technician_id)) {
-        $input['_observers']['_users_id_observer'] = [(int)$technician_id];
-    }
-    
-    try {
-        $ticket_id = $ticket->add($input);
-        if ($ticket_id) {
-            registerMaintenanceTicket($ticket_id, $computer_id, $maintenance_name);
-            return $ticket_id;
-        }
-        return false;
-    } catch (Exception $e) {
-        Toolbox::logError("Erro ao criar o ticket: " . $e->getMessage());
-        return false;
-    }
-}
-
-// Limpa tickets resolvidos
-cleanResolvedMaintenanceTickets();
-
-// Cria tickets automáticos se habilitado
-if ($auto_ticket_enabled) {
-    $all_maintenances = $pm->find([], 'next_maintenance_date ASC');
-    
-    foreach ($all_maintenances as $item) {
-        if (!empty($item['last_maintenance_date']) && !empty($item['next_maintenance_date'])) {
-            $last = strtotime($item['last_maintenance_date']);
-            $next = strtotime($item['next_maintenance_date']);
-            $now = time();
-            
-            $total_days = $next - $last;
-            $elapsed_days = $now - $last;
-            
-            if ($total_days > 0) {
-                $percent = min(100, max(0, round(($elapsed_days / $total_days) * 100)));
-                
-                if ($percent >= 99) {
-                    $ticket_id = createMaintenanceTicket(
-                        $item['items_id'],
-                        $item['name'],
-                        $item['technician_id']
-                    );
-                    
-                    if ($ticket_id) {
-                        Session::addMessageAfterRedirect(
-                            sprintf(__('Ticket criado automaticamente para manutenção preventiva: %s'), $item['name']),
-                            true,
-                            INFO
-                        );
-                    }
-                }
-            }
-        }
-    }
-}
-
-// Prepara critérios de busca
-$criteria = [];
+// Prepara critérios de busca (restritos às entidades ativas do usuário)
+// Prepares search criteria (restricted to user's active entities)
+$table    = PluginPreventivemaintenancePreventivemaintenance::getTable();
+$criteria = getEntitiesRestrictCriteria($table, '', '', true);
 if (!empty($filters['technician'])) {
-    $criteria['technician_id'] = (int)$filters['technician'];
+    $criteria['technician_id'] = $filters['technician'];
 }
 if (!empty($filters['entity'])) {
-    $criteria['entities_id'] = (int)$filters['entity'];
+    $criteria['entities_id'] = $filters['entity'];
 }
-
-// Adiciona filtros de data
-if (!empty($filters['date_from']) || !empty($filters['date_to'])) {
-    $date_criteria = [];
-    if (!empty($filters['date_from'])) {
-        $date_criteria[] = ['next_maintenance_date' => ['>=', $filters['date_from']]];
-    }
-    if (!empty($filters['date_to'])) {
-        $date_criteria[] = ['next_maintenance_date' => ['<=', $filters['date_to']]];
-    }
-    $criteria[] = ['AND' => $date_criteria];
+if (!empty($filters['date_from'])) {
+    $criteria[] = ['next_maintenance_date' => ['>=', $filters['date_from']]];
+}
+if (!empty($filters['date_to'])) {
+    $criteria[] = ['next_maintenance_date' => ['<=', $filters['date_to']]];
 }
 
 // Busca itens
-$all_items = $pm->find($criteria, 'entities_id, next_maintenance_date ASC');
+// Finds items
+$all_items = $pm->find($criteria, ['entities_id', 'next_maintenance_date ASC']);
 
-// Obtém lista de técnicos cadastrados nas manutenções
-$technicians_in_maintenance = [];
-foreach ($all_items as $item) {
-    if ($item['technician_id'] > 0) {
-        $technicians_in_maintenance[$item['technician_id']] = $item['technician_id'];
-    }
-}
-
-// Carrega os dados dos técnicos (com nome completo - realname)
+// Carrega os dados dos técnicos cadastrados nas manutenções (com nome completo)
+// Loads technicians used by maintenances (with full name)
 $technicians_data = [];
-if (!empty($technicians_in_maintenance)) {
+$technician_ids   = array_filter(array_unique(array_column($all_items, 'technician_id')));
+if (!empty($technician_ids)) {
+    $dbu  = new DbUtils();
     $user = new User();
-    $technicians_iterator = $user->find(['id' => array_values($technicians_in_maintenance)]);
-    foreach ($technicians_iterator as $tech) {
-        $technicians_data[$tech['id']] = formatUserName($tech['id'], $tech['name'], $tech['realname'], $tech['firstname']);
+    foreach ($user->find(['id' => array_values($technician_ids)]) as $tech) {
+        $technicians_data[$tech['id']] = $dbu->formatUserName($tech['id'], $tech['name'], $tech['realname'], $tech['firstname']);
     }
 }
+asort($technicians_data, SORT_NATURAL | SORT_FLAG_CASE);
 
-// Função para obter caminho da entidade
-function getFullEntityPath($entity_id) {
-    $entity = new Entity();
-    if ($entity->getFromDB($entity_id)) {
-        $path = $entity->getName();
-        $parent_id = $entity->getField('entities_id');
-        
-        while ($parent_id > 0) {
-            $parent = new Entity();
-            if ($parent->getFromDB($parent_id)) {
-                $path = $parent->getName().' > '.$path;
-                $parent_id = $parent->getField('entities_id');
-            } else {
-                break;
-            }
-        }
-        return $path;
-    }
-    return '';
-}
-
-// Agrupa itens por entidade
+// Agrupa itens por entidade (caminho completo)
+// Groups items by entity (full path)
 $items_by_entity = [];
 foreach ($all_items as $item) {
-    $entity_id = $item['entities_id'];
-    $entity_path = getFullEntityPath($entity_id);
-    
-    if ($entity_path !== '') {
-        if (!isset($items_by_entity[$entity_path])) {
-            $items_by_entity[$entity_path] = [
-                'name' => $entity_path,
-                'items' => []
-            ];
-        }
-        
-        $last = !empty($item['last_maintenance_date']) ? strtotime($item['last_maintenance_date']) : 0;
-        $next = !empty($item['next_maintenance_date']) ? strtotime($item['next_maintenance_date']) : 0;
-        $now = time();
-        
-        $include_item = true;
-        
-        if ($filters['status'] !== 'all' && $next > 0 && $last > 0) {
-            $total_days = $next - $last;
-            $elapsed_days = $now - $last;
-            
-            $percent = ($total_days > 0) ? min(100, max(0, round(($elapsed_days / $total_days) * 100))) : 0;
-            
-            switch ($filters['status']) {
-                case 'ontime':
-                    if ($percent >= 80) $include_item = false;
-                    break;
-                case 'warning':
-                    if ($percent < 80 || $percent >= 98) $include_item = false;
-                    break;
-                case 'urgent':
-                    if ($percent < 98) $include_item = false;
-                    break;
-                case 'undefined':
-                    if ($next > 0 && $last > 0) $include_item = false;
-                    break;
-            }
-        }
-        
-        if ($include_item) {
-            $items_by_entity[$entity_path]['items'][] = $item;
+    $entity_path = Dropdown::getDropdownName('glpi_entities', $item['entities_id'], false, true, false, '');
+    if ($entity_path === '') {
+        continue;
+    }
+
+    if ($filters['status'] !== 'all') {
+        $percent = PluginPreventivemaintenancePreventivemaintenance::computeProgress($item);
+        $include_item = match ($filters['status']) {
+            'ontime'    => $percent !== null && $percent < 80,
+            'warning'   => $percent !== null && $percent >= 80 && $percent < 98,
+            'urgent'    => $percent !== null && $percent >= 98,
+            'undefined' => $percent === null,
+        };
+        if (!$include_item) {
+            continue;
         }
     }
+
+    $items_by_entity[$entity_path]['name']    = $entity_path;
+    $items_by_entity[$entity_path]['items'][] = $item;
 }
 
 // Ordena entidades
-uksort($items_by_entity, function($a, $b) {
-    return strnatcasecmp($a, $b);
-});
+// Sorts entities
+uksort($items_by_entity, 'strnatcasecmp');
+
+$csrf_token = Session::getNewCSRFToken();
 
 // Exibe cabeçalho
+// Displays header
 Html::header(
-    __('Preventive Maintenance', 'preventivemaintenance'),
-    $_SERVER['PHP_SELF'],
+    PluginPreventivemaintenancePreventivemaintenance::getTypeName(Session::getPluralNumber()),
+    '',
     'plugins',
-    'preventivemaintenance'
+    'PluginPreventivemaintenanceMenu'
 );
 ?>
 
@@ -861,89 +495,104 @@ Html::header(
 
 <div class="plugin-preventive-maintenance-container">
     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; padding: 15px; background: #f8f9fa; border-radius: 8px;">
-        <h2 style="margin: 0;"><i class="fas fa-calendar-check" style="margin-right: 10px;"></i><?= __('Preventive Maintenance') ?></h2>
+        <h2 style="margin: 0;"><i class="ti ti-calendar-check" style="margin-right: 10px;"></i><?= htmlescape(__('Preventive Maintenance')) ?></h2>
         <div style="display: flex; align-items: center;">
             <?php if ($pm->canCreate()): ?>
-                <a href="preventivemaintenance.form.php" class="btn btn-primary" style="margin-right: 10px;">
-                    <i class="fas fa-plus"></i> <?= "&nbsp",__('Add') ?>
+                <a href="<?= htmlescape($form_url) ?>" class="btn btn-primary" style="margin-right: 10px;">
+                    <i class="ti ti-plus"></i>&nbsp;<?= htmlescape(__('Add')) ?>
                 </a>
             <?php endif; ?>
-            <button id="toggleFilters" class="btn btn-outline-info">
-                <i class="fas fa-filter"></i>  <?="&nbsp", __('Filters') ?>
+            <button type="button" id="toggleFilters" class="btn btn-outline-info">
+                <i class="ti ti-filter"></i>&nbsp;<?= htmlescape(__('Filters')) ?>
             </button>
-            
+
             <div class="toggle-container">
-                <span class="toggle-label"><?= __('Auto Ticket') ?></span>
-                <a href="preventivemaintenance.php?toggle_auto_ticket=1" 
-                   class="toggle-btn <?= $auto_ticket_enabled ? 'on' : 'off' ?>" 
-                   title="<?= $auto_ticket_enabled ? __('Disable Auto Ticket') : __('Enable Auto Ticket') ?>">
-                    <span class="toggle-knob"></span>
-                </a>
+                <span class="toggle-label"><?= htmlescape(__('Auto Ticket')) ?></span>
+                <?php if (Session::haveRight('plugin_preventivemaintenance', UPDATE)): ?>
+                    <form method="post" action="<?= htmlescape($list_url) ?>" style="display: inline; margin: 0;">
+                        <input type="hidden" name="_glpi_csrf_token" value="<?= htmlescape($csrf_token) ?>">
+                        <input type="hidden" name="toggle_auto_ticket" value="1">
+                        <button type="submit"
+                                class="toggle-btn border-0 p-0 <?= $auto_ticket_enabled ? 'on' : 'off' ?>"
+                                title="<?= htmlescape($auto_ticket_enabled ? __('Disable Auto Ticket') : __('Enable Auto Ticket')) ?>">
+                            <span class="toggle-knob"></span>
+                        </button>
+                    </form>
+                <?php else: ?>
+                    <span class="toggle-btn <?= $auto_ticket_enabled ? 'on' : 'off' ?>" style="cursor: default;">
+                        <span class="toggle-knob"></span>
+                    </span>
+                <?php endif; ?>
             </div>
         </div>
     </div>
 
     <div id="advancedFilters" class="advanced-filters" style="<?= isset($_GET['filter_applied']) ? '' : 'display: none;' ?>">
-        <form method="get" action="">
+        <form method="get" action="<?= htmlescape($list_url) ?>">
             <input type="hidden" name="filter_applied" value="1">
-            
+
             <div class="filter-row">
                 <div class="filter-group small">
-                    <div class="filter-title"><?= __('Status') ?></div>
+                    <div class="filter-title"><?= htmlescape(__('Status')) ?></div>
                     <select name="status" class="form-control">
-                        <option value="all" <?= $filters['status'] === 'all' ? 'selected' : '' ?>><?= __('Todos') ?></option>
-                        <option value="ontime" <?= $filters['status'] === 'ontime' ? 'selected' : '' ?>><?= __('Em dia') ?></option>
-                        <option value="warning" <?= $filters['status'] === 'warning' ? 'selected' : '' ?>><?= __('Atenção') ?></option>
-                        <option value="urgent" <?= $filters['status'] === 'urgent' ? 'selected' : '' ?>><?= __('Urgente') ?></option>
-                        <option value="undefined" <?= $filters['status'] === 'undefined' ? 'selected' : '' ?>><?= __('Indefinido') ?></option>
-                    </select>
-                </div>
-                
-                <div class="filter-group small">
-                    <div class="filter-title"><?= __('De') ?></div>
-                    <input type="date" name="date_from" class="form-control" value="<?= $filters['date_from'] ?>">
-                </div>
-                
-                <div class="filter-group small">
-                    <div class="filter-title"><?= __('Até') ?></div>
-                    <input type="date" name="date_to" class="form-control" value="<?= $filters['date_to'] ?>">
-                </div>
-                
-                <div class="filter-group">
-                    <div class="filter-title"><?= __('Technician') ?></div>
-                    <select name="technician" class="form-control">
-                        <option value="0"><?= __('Todos') ?></option>
                         <?php
-                        if (!empty($technicians_data)) {
-                            foreach ($technicians_data as $tech_id => $tech_name) {
-                                $selected = ($filters['technician'] == $tech_id) ? 'selected' : '';
-                                echo "<option value='$tech_id' $selected>$tech_name</option>";
-                            }
+                        $status_options = [
+                            'all'       => __('Todos'),
+                            'ontime'    => __('Em dia'),
+                            'warning'   => __('Atenção'),
+                            'urgent'    => __('Urgente'),
+                            'undefined' => __('Indefinido'),
+                        ];
+                        foreach ($status_options as $value => $label) {
+                            $selected = $filters['status'] === $value ? 'selected' : '';
+                            echo '<option value="' . htmlescape($value) . '" ' . $selected . '>' . htmlescape($label) . '</option>';
                         }
                         ?>
                     </select>
                 </div>
-                
+
+                <div class="filter-group small">
+                    <div class="filter-title"><?= htmlescape(__('De')) ?></div>
+                    <input type="date" name="date_from" class="form-control" value="<?= htmlescape($filters['date_from']) ?>">
+                </div>
+
+                <div class="filter-group small">
+                    <div class="filter-title"><?= htmlescape(__('Até')) ?></div>
+                    <input type="date" name="date_to" class="form-control" value="<?= htmlescape($filters['date_to']) ?>">
+                </div>
+
                 <div class="filter-group">
-                    <div class="filter-title"><?= __('Entity') ?></div>
-                    <?php 
-                    $entity_options = [
-                        'name' => 'entity',
-                        'value' => $filters['entity'],
+                    <div class="filter-title"><?= htmlescape(__('Technician')) ?></div>
+                    <select name="technician" class="form-control">
+                        <option value="0"><?= htmlescape(__('Todos')) ?></option>
+                        <?php
+                        foreach ($technicians_data as $tech_id => $tech_name) {
+                            $selected = ($filters['technician'] == $tech_id) ? 'selected' : '';
+                            echo '<option value="' . (int) $tech_id . '" ' . $selected . '>' . htmlescape($tech_name) . '</option>';
+                        }
+                        ?>
+                    </select>
+                </div>
+
+                <div class="filter-group">
+                    <div class="filter-title"><?= htmlescape(__('Entity')) ?></div>
+                    <?php
+                    echo Entity::dropdown([
+                        'name'    => 'entity',
+                        'value'   => $filters['entity'],
                         'display' => false,
-                        'width' => '100%'
-                    ];
-                    echo Entity::dropdown($entity_options);
+                        'width'   => '100%',
+                    ]);
                     ?>
                 </div>
             </div>
-            
+
             <div class="filter-actions">
                 <button type="submit" class="btn btn-primary btn-sm">
-                    <i class="fas fa-filter"></i> <?= __('Aplicar') ?>
+                    <i class="ti ti-filter"></i> <?= htmlescape(__('Aplicar')) ?>
                 </button>
-                <a href="preventivemaintenance.php" class="btn btn-outline-secondary btn-sm">
-                    <i class="fas fa-times"></i> <?= __('Limpar') ?>
+                <a href="<?= htmlescape($list_url) ?>" class="btn btn-outline-secondary btn-sm">
+                    <i class="ti ti-x"></i> <?= htmlescape(__('Limpar')) ?>
                 </a>
             </div>
         </form>
@@ -951,90 +600,81 @@ Html::header(
 
     <?php if (empty($items_by_entity)): ?>
         <div class="alert alert-warning">
-            <i class="fas fa-exclamation-triangle"></i> <?= __('Nenhum registro encontrado.') ?>
+            <i class="ti ti-alert-triangle"></i> <?= htmlescape(__('Nenhum registro encontrado.')) ?>
         </div>
     <?php else: ?>
         <?php foreach ($items_by_entity as $entity): ?>
-            <?php if (empty($entity['items'])) continue; ?>
-            
             <div class="entity-group">
                 <div class="entity-title">
-                    <i class="fas fa-building"></i> <?= $entity['name'] ?>
+                    <i class="ti ti-building"></i> <?= htmlescape($entity['name']) ?>
                 </div>
-                
+
                 <div style="overflow-x: auto;">
                     <table class="table table-hover">
                         <thead>
                             <tr>
-                                <th style="text-align: center"><?= __('ID') ?></th>
-                                <th style="text-align: center"><?= __('Nome/descr.') ?></th>
-                                <th style="text-align: center"><?= __('Computer') ?></th>
-                                <th style="text-align: center"><?= __('Technician') ?></th>
-                                <th style="text-align: center"><?= __('Ult. Man.') ?></th>
-                                <th style="text-align: center"><?= __('Prox. Man') ?></th>
-                                <th style="text-align: center"><?= __('Status') ?></th>
-                                <th style="text-align: center"><?= __('Actions') ?></th>
+                                <th style="text-align: center"><?= htmlescape(__('ID')) ?></th>
+                                <th style="text-align: center"><?= htmlescape(__('Nome/descr.')) ?></th>
+                                <th style="text-align: center"><?= htmlescape(__('Computer')) ?></th>
+                                <th style="text-align: center"><?= htmlescape(__('Technician')) ?></th>
+                                <th style="text-align: center"><?= htmlescape(__('Ult. Man.')) ?></th>
+                                <th style="text-align: center"><?= htmlescape(__('Prox. Man')) ?></th>
+                                <th style="text-align: center"><?= htmlescape(__('Status')) ?></th>
+                                <th style="text-align: center"><?= htmlescape(__('Actions')) ?></th>
                             </tr>
                         </thead>
                         <tbody>
                             <?php foreach ($entity['items'] as $item): ?>
                                 <?php
-                                $computer = new Computer();
+                                $computer      = new Computer();
                                 $computer_name = $computer->getFromDB($item['items_id']) ? $computer->getName() : __('N/A');
-                                
-                                $technician_name = isset($technicians_data[$item['technician_id']]) ? $technicians_data[$item['technician_id']] : '-';
-                                
-                                $last = !empty($item['last_maintenance_date']) ? strtotime($item['last_maintenance_date']) : 0;
-                                $next = !empty($item['next_maintenance_date']) ? strtotime($item['next_maintenance_date']) : 0;
-                                $now = time();
-                                
-                                $status_html = "<span class='badge bg-secondary'>".__('Undefined')."</span>";
-                                
-                                if ($next > 0 && $last > 0) {
-                                    $total_days = $next - $last;
-                                    $elapsed_days = $now - $last;
-                                    
-                                    $percent = ($total_days > 0) ? min(100, max(0, round(($elapsed_days / $total_days) * 100))) : 0;
-                                    
+                                $technician_name = $technicians_data[$item['technician_id']] ?? '-';
+
+                                $percent     = PluginPreventivemaintenancePreventivemaintenance::computeProgress($item);
+                                $status_html = "<span class='badge bg-secondary'>" . htmlescape(__('Undefined')) . "</span>";
+                                if ($percent !== null) {
                                     if ($percent < 80) {
                                         $status_class = 'bg-success';
-                                        $status_text = __('Em dia');
-                                    } elseif ($percent >= 80 && $percent < 98) {
+                                        $status_text  = __('Em dia');
+                                    } elseif ($percent < 98) {
                                         $status_class = 'bg-warning';
-                                        $status_text = __('Atenção');
+                                        $status_text  = __('Atenção');
                                     } else {
                                         $status_class = 'bg-danger';
-                                        $status_text = __('Urgente');
+                                        $status_text  = __('Urgente');
                                     }
-                                    
+
                                     $status_html = "<div class='progress'>
                                         <div class='progress-bar $status_class' role='progressbar' style='width: $percent%'>
-                                            <strong>$percent% - $status_text</strong>
-                                        </div>";
+                                            <strong>$percent% - " . htmlescape($status_text) . "</strong>
+                                        </div>
+                                    </div>";
                                 }
                                 ?>
                                 <tr>
-                                    <td style="text-align: center"><?= $item['id'] ?></td>
-                                    <td style="text-align: center"><?= $item['name'] ?></td>
-                                    <td style="text-align: center"><?= $computer_name ?></td>
-                                    <td style="text-align: center"><?= $technician_name ?></td>
-                                    <td style="text-align: center"><?= !empty($item['last_maintenance_date']) ? Html::convDate($item['last_maintenance_date']) : '-' ?></td>
-                                    <td style="text-align: center"><?= !empty($item['next_maintenance_date']) ? Html::convDate($item['next_maintenance_date']) : '-' ?></td>
+                                    <td style="text-align: center"><?= (int) $item['id'] ?></td>
+                                    <td style="text-align: center"><?= htmlescape($item['name']) ?></td>
+                                    <td style="text-align: center"><?= htmlescape($computer_name) ?></td>
+                                    <td style="text-align: center"><?= htmlescape($technician_name) ?></td>
+                                    <td style="text-align: center"><?= !empty($item['last_maintenance_date']) ? htmlescape(Html::convDate($item['last_maintenance_date'])) : '-' ?></td>
+                                    <td style="text-align: center"><?= !empty($item['next_maintenance_date']) ? htmlescape(Html::convDate($item['next_maintenance_date'])) : '-' ?></td>
                                     <td style="text-align: center"><?= $status_html ?></td>
                                     <td style="text-align: center">
                                         <div class="action-buttons">
-                                            <?php if (Session::haveRight('plugin_preventivemaintenance', UPDATE)): ?>
-                                                <a href="preventivemaintenance.form.php?id=<?= $item['id'] ?>" class="btn btn-sm btn-primary" title="<?= __('Edit') ?>">
-                                                    <i class="fas fa-edit"></i>
+                                            <?php if ($pm->canUpdate()): ?>
+                                                <a href="<?= htmlescape($form_url . '?id=' . (int) $item['id']) ?>" class="btn btn-sm btn-primary" title="<?= htmlescape(__('Edit')) ?>">
+                                                    <i class="ti ti-edit"></i>
                                                 </a>
                                             <?php endif; ?>
                                             <?php if ($pm->canDelete()): ?>
-                                                <a href="preventivemaintenance.php?delete=<?= $item['id'] ?>" 
-                                                   class="btn btn-sm btn-danger"
-                                                   title="<?= __('Delete') ?>"
-                                                   onclick="return confirm('<?= __('Do you really want to delete this record?') ?>');">
-                                                    <i class="fas fa-trash"></i>
-                                                </a>
+                                                <form method="post" action="<?= htmlescape($list_url) ?>" style="display: inline; margin: 0;"
+                                                      onsubmit="return confirm(<?= htmlescape(json_encode(__('Do you really want to delete this record?'))) ?>);">
+                                                    <input type="hidden" name="_glpi_csrf_token" value="<?= htmlescape($csrf_token) ?>">
+                                                    <input type="hidden" name="delete" value="<?= (int) $item['id'] ?>">
+                                                    <button type="submit" class="btn btn-sm btn-danger" title="<?= htmlescape(__('Delete')) ?>">
+                                                        <i class="ti ti-trash"></i>
+                                                    </button>
+                                                </form>
                                             <?php endif; ?>
                                         </div>
                                     </td>
@@ -1048,7 +688,7 @@ Html::header(
     <?php endif; ?>
 
     <div class="custom-footer">
-        <i class="fas fa-code"></i> <?= __('Developed by WIDA - Work Information Developments and Analytics') ?>
+        <i class="ti ti-code"></i> <?= htmlescape(__('Developed by WIDA - Work Information Developments and Analytics')) ?>
     </div>
 </div>
 

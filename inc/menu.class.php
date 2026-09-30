@@ -59,39 +59,52 @@
 //Verificação de segurança padrão
 //Standard security check
 if (!defined('GLPI_ROOT')) {
-   die("Sorry. You can't access this file directly");
+    die("Sorry. You can't access this file directly");
 }
 
 //Classe que define o menu do plugin
 //Class that defines the plugin menu
-class PluginPreventivemaintenanceMenu extends CommonGLPI {
+class PluginPreventivemaintenanceMenu extends CommonGLPI
+{
+    public static $rightname = 'plugin_preventivemaintenance';
+
     //Retorna o nome do menu
     //Returns menu name
-    static function getMenuName() {
+    public static function getMenuName()
+    {
         return __('Preventive Maintenance', 'preventivemaintenance');
+    }
+
+    public static function getIcon()
+    {
+        return PluginPreventivemaintenancePreventivemaintenance::getIcon();
     }
 
     //Define o conteúdo completo do menu
     //Defines complete menu content
-    static function getMenuContent() {
+    public static function getMenuContent()
+    {
+        $itemtype = PluginPreventivemaintenancePreventivemaintenance::class;
+
         $menu = [
             'title' => self::getMenuName(),
-            'page'  => PluginPreventivemaintenancePreventivemaintenance::getSearchURL(false),
-            'icon'  => 'fas fa-calendar-check'
+            'page'  => $itemtype::getSearchURL(false),
+            'icon'  => self::getIcon(),
         ];
-        
+
         //Adiciona opções se o usuário tiver permissão de visualização
         //Adds options if user has view permission
-        if (PluginPreventivemaintenancePreventivemaintenance::canView()) {
-            $menu['options'] = [
-                'preventivemaintenance' => [
-                    'title' => PluginPreventivemaintenancePreventivemaintenance::getTypeName(2),
-                    'page'  => PluginPreventivemaintenancePreventivemaintenance::getSearchURL(false),
-                    'icon'  => 'fas fa-calendar-check'
-                ]
+        if ($itemtype::canView()) {
+            $menu['options']['preventivemaintenance'] = [
+                'title' => $itemtype::getTypeName(Session::getPluralNumber()),
+                'page'  => $itemtype::getSearchURL(false),
+                'icon'  => self::getIcon(),
             ];
+            if ($itemtype::canCreate()) {
+                $menu['options']['preventivemaintenance']['links']['add'] = $itemtype::getFormURL(false);
+            }
         }
-        
+
         return $menu;
     }
 }
