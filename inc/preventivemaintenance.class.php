@@ -56,6 +56,8 @@
  * -------------------------------------------------------------------------
  */
 
+use Glpi\DBAL\QuerySubQuery;
+
 // Verifica se o arquivo está sendo acessado diretamente (segurança GLPI)
 // Check if file is being accessed directly (GLPI security)
 if (!defined('GLPI_ROOT')) {
@@ -636,6 +638,12 @@ class PluginPreventivemaintenancePreventivemaintenance extends CommonDBTM
             self::updateMaintenanceOnTicketResolution((int) $data['id']);
             $DB->delete(self::TICKETS_TABLE, ['ticket_id' => $data['id']]);
         }
+
+        // Remove vínculos de tickets que foram excluídos definitivamente do GLPI
+        // Removes links to tickets that were permanently deleted from GLPI
+        $DB->delete(self::TICKETS_TABLE, [
+            'NOT' => ['ticket_id' => new QuerySubQuery(['SELECT' => 'id', 'FROM' => 'glpi_tickets'])],
+        ]);
     }
 
     /**

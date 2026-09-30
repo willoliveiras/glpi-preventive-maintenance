@@ -56,6 +56,8 @@
  * -------------------------------------------------------------------------
  */
 
+use Glpi\DBAL\QueryExpression;
+
 //Função de instalação/atualização do plugin - cria/migra tabelas e configura permissões
 //Plugin install/upgrade function - creates/migrates tables and configures permissions
 function plugin_preventivemaintenance_install()
@@ -133,13 +135,20 @@ function plugin_preventivemaintenance_install()
     // 2. Migrate tables created by version 1.x (GLPI 10)
     $table = 'glpi_plugin_preventivemaintenance_preventivemaintenances';
 
-    // Datas zeradas ('0000-00-00') da versão 1.x bloqueiam o ALTER em modo SQL estrito
-    // Zero dates ('0000-00-00') from version 1.x block the ALTER in strict SQL mode
-    foreach (['last_maintenance_date', 'next_maintenance_date'] as $field) {
-        if (countElementsInTable($table, [$field => '0000-00-00']) > 0) {
-            $DB->doQuery("SET SESSION sql_mode = REPLACE(REPLACE(@@SESSION.sql_mode, 'NO_ZERO_DATE', ''), 'NO_ZERO_IN_DATE', '')");
-            $DB->doQuery("ALTER TABLE `$table` MODIFY `$field` date DEFAULT NULL");
-            $DB->update($table, [$field => null], [$field => '0000-00-00']);
+    // Datas zeradas ('0000-00-00') da versão 1.x bloqueiam o ALTER em modo SQL estrito.
+    // A comparação é feita como texto: o MySQL 8 rejeita até comparar com '0000-00-00' (erro 1525).
+    // Zero dates ('0000-00-00') from version 1.x block the ALTER in strict SQL mode.
+    // Compared as text: MySQL 8 rejects even comparing against '0000-00-00' (error 1525).
+    if ($DB->tableExists($table)) {
+        foreach (['last_maintenance_date', 'next_maintenance_date'] as $field) {
+            $is_zero_date = new QueryExpression('CAST(' . $DB->quoteName($field) . " AS CHAR) = '0000-00-00'");
+            if (countElementsInTable($table, [$is_zero_date]) > 0) {
+                $sql_mode = $DB->doQuery('SELECT @@SESSION.sql_mode AS mode')->fetch_assoc()['mode'];
+                $DB->doQuery("SET SESSION sql_mode = REPLACE(REPLACE(@@SESSION.sql_mode, 'NO_ZERO_DATE', ''), 'NO_ZERO_IN_DATE', '')");
+                $DB->doQuery("ALTER TABLE `$table` MODIFY `$field` date DEFAULT NULL");
+                $DB->update($table, [$field => null], [$is_zero_date]);
+                $DB->doQuery('SET SESSION sql_mode = ' . $DB->quoteValue($sql_mode));
+            }
         }
     }
     $migration->changeField($table, 'technician_id', 'technician_id', "int {$sign} NOT NULL DEFAULT '0'");
